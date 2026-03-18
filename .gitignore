@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.idea/
+.DS_Store
+
+# brief: do not include the original datasets
+*.npz
+task1_nlp/data/
+task2_cv/data/
+
+# large model weights
+*.joblib
+*.pt
+*.pth

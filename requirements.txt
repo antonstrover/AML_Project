@@ -5,3 +5,7 @@ scikit-learn>=1.4
 pandas>=2.0
 matplotlib>=3.7
 joblib>=1.3
+
+# Task 1 (NLP)
+nltk>=3.8            # external movie_reviews evaluation + resources:
+                    #   python -c "import nltk; nltk.download('movie_reviews'); nltk.download('stopwords'); nltk.download('punkt')"

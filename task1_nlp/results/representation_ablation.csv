@@ -1,0 +1,4 @@
+representation,val_acc
+"word(1,2)",0.7410881801125704
+"char(3,5)",0.7485928705440901
+word+char (union),0.7579737335834896

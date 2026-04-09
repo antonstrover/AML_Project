@@ -9,3 +9,9 @@ joblib>=1.3
 # Task 1 (NLP)
 nltk>=3.8            # external movie_reviews evaluation + resources:
                     #   python -c "import nltk; nltk.download('movie_reviews'); nltk.download('stopwords'); nltk.download('punkt')"
+
+# Task 2 (CV)
+opencv-python>=4.8   # preprocessing, affine warps
+scikit-image>=0.22   # HOG descriptors
+torch>=2.0           # ONLY needed for the heatmap CNN; the PCA shape-model
+                    # path runs without it

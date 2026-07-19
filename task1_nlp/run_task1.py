@@ -1,7 +1,7 @@
 """End-to-end Task 1 pipeline.
 
 Run:  python run_task1.py
-Produces figures/, results/, models/ and submission/task1_predictions.csv.
+Produces figures/, results/, models/ and submission/results_task1.csv.
 
 Architecture (two decoupled gates):
     text --> [structural spam gate: GMM] --spam--> dummy(-1)
@@ -34,6 +34,7 @@ from structure_features import (FEATURE_NAMES, extract_matrix,
 from spam_gate import SpamGate
 from sentiment_models import (WordListClassifier, build_nb, build_svm,
                               light_clean, predict_with_dummy)
+from submission import save_as_csv
 
 SEED = 42
 np.random.seed(SEED)
@@ -219,11 +220,13 @@ def main():
     te_spam = gate.predict(te.text)
     te_final, _ = predict_with_dummy(prob_model, te.text.tolist(), te_spam,
                                      conf_threshold=0.0, dummy=DUMMY)
-    out = pd.DataFrame({"text": te.text, "label": te_final})  # order preserved
-    out_path = os.path.join(SUB, "task1_predictions.csv")
-    out[["label"]].to_csv(out_path, index=False)
+    # Written with the worksheet's save_as_csv verbatim (no header, np.savetxt),
+    # in the original test-set order -- the brief warns twice against reordering.
+    save_as_csv(np.asarray(te_final), SUB)
+    out_path = os.path.join(SUB, "results_task1.csv")
     dist = pd.Series(te_final).value_counts().to_dict()
-    print(f"[submit] wrote {out_path}  rows={len(out)}  label dist={dist}")
+    print(f"[submit] wrote {out_path}  rows={len(te_final)}  label dist={dist}")
+    assert set(dist) == {0, 1, DUMMY}, f"expected three classes incl. dummy, got {sorted(dist)}"
     log["test_label_distribution"] = {int(k): int(v) for k, v in dist.items()}
 
     # ----- persist artefacts ------------------------------------------------ #

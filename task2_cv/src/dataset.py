@@ -21,6 +21,12 @@ Preprocessing pipeline (W06_L12), each step justified in the report:
 The crucial correctness point mirrored from Task 1's structural care: when the
 image is resized, the coordinates must be multiplied by the same scale, and at
 submission time predictions must be scaled BACK to original resolution.
+
+``save_as_csv`` at the bottom is the worksheet's own export function, copied
+verbatim (both asserts included) because the brief requires predictions to be
+written by it. It expects points at ORIGINAL 256x256 resolution, so
+``to_original_resolution`` must be applied first, and it preserves row order --
+the test set is never permuted.
 """
 from __future__ import annotations
 
@@ -93,19 +99,12 @@ def to_original_resolution(pts_resized: np.ndarray, scale: Tuple[float, float]) 
     return out
 
 
-def save_submission(pred_orig: np.ndarray, path: str):
-    """Write (n_images, n_points, 2) predictions in the assignment CSV layout.
-
-    Order is preserved (do NOT reorder the test set -- the brief warns twice).
+def save_as_csv(points, location='.'):
     """
-    n, k, _ = pred_orig.shape
-    flat = pred_orig.reshape(n, k * 2)
-    import csv
-    with open(path, "w", newline="") as f:
-        w = csv.writer(f)
-        header = []
-        for i in range(k):
-            header += [f"x{i}", f"y{i}"]
-        w.writerow(header)
-        for row in flat:
-            w.writerow([f"{v:.4f}" for v in row])
+    Save the points out as a .csv file
+    :param points: numpy array of shape (no_test_images, no_points, 2) to be saved
+    :param location: Directory to save results.csv in. Default to current working directory
+    """
+    assert points.shape[0] == 554, 'wrong number of image points, should be 554 test images'
+    assert np.prod(points.shape[1:]) == 5*2, 'wrong number of points provided. There should be 5 points with 2 values (x,y) per point'
+    np.savetxt(location + '/results_task2.csv', np.reshape(points, (points.shape[0], -1)), delimiter=',')

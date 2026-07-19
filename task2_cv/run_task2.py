@@ -260,8 +260,8 @@ def main():
     pred_orig = np.stack([
         D.to_original_resolution(pred_te[i], scales[i]) for i in range(len(pred_te))
     ])
-    D.save_submission(pred_orig, os.path.join(OUT_SUB, "task2_predictions.csv"))
-    print(f"Submission ({chosen}) written: submission/task2_predictions.csv "
+    D.save_as_csv(pred_orig, OUT_SUB)
+    print(f"Submission ({chosen}) written: submission/results_task2.csv "
           f"shape={pred_orig.shape}")
     return 0
 

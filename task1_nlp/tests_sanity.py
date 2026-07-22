@@ -21,7 +21,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
-from sentiment_models import GloVeBiLSTM, light_clean, load_glove, tokenise, predict_with_dummy
+from sentiment_models import (GloVeBiLSTM, SoftVoteEnsemble, light_clean,
+                              load_glove, mark_negation, predict_with_dummy,
+                              remove_stopwords, tokenise)
 from submission import save_as_csv
 
 PASS, FAIL = "PASS", "FAIL"
@@ -41,6 +43,18 @@ check("light_clean maps a missing document to the empty string, not 'none'",
 check("tokenise keeps sentiment punctuation",
       tokenise("Awful!! Really?") == ["awful", "!", "!", "really", "?"])
 check("tokenise keeps clitics intact", "wasn't" in tokenise("It wasn't bad"))
+
+# 1b. preprocessing variants used in the ablation --------------------------- #
+check("negation marking scopes over the following words",
+      mark_negation("not a good film") == "not not_a not_good not_film")
+check("negation marking stops at punctuation",
+      mark_negation("not good, brilliant") == "not not_good, brilliant")
+check("negation marking triggers on clitics",
+      mark_negation("it wasn't good") == "it wasn't not_good")
+check("negation marking leaves unnegated text alone",
+      mark_negation("a good film") == "a good film")
+check("stopword removal keeps the negations it must not delete",
+      set(remove_stopwords("this was not a good film").split()) >= {"not", "good"})
 
 # 2. sequence encoding ------------------------------------------------------ #
 m = GloVeBiLSTM(max_len=6, min_count=1)
@@ -71,11 +85,25 @@ os.unlink(gpath)
 
 
 # 4. 3-way routing ---------------------------------------------------------- #
-class _StubModel:
-    """Always confidently positive, so any dummy label must come from routing."""
-    def predict_proba(self, texts):
-        return np.tile([0.1, 0.9], (len(texts), 1))
+class _Stub:
+    """Returns a fixed probability pair for every document."""
+    def __init__(self, p):
+        self.p = p
 
+    def predict_proba(self, texts):
+        return np.tile(self.p, (len(texts), 1))
+
+
+# Always confidently positive, so any dummy label must come from routing.
+_StubModel = lambda: _Stub([0.1, 0.9])
+
+
+check("soft vote averages member probabilities",
+      np.allclose(SoftVoteEnsemble({"a": _Stub([0.2, 0.8]), "b": _Stub([0.6, 0.4])})
+                  .predict_proba(["x"]), [[0.4, 0.6]]))
+check("soft vote can outvote a single confident member",
+      SoftVoteEnsemble({"a": _Stub([0.9, 0.1]), "b": _Stub([0.45, 0.55]),
+                        "c": _Stub([0.4, 0.6])}).predict(["x"])[0] == 0)
 
 spam = np.array([False, True, False, True])
 pred, conf = predict_with_dummy(_StubModel(), ["a", "b", "c", "d"], spam, dummy=-1)

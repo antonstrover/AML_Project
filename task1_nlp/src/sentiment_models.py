@@ -1,11 +1,19 @@
 """Sentiment models for Task 1 (my approach).
 
-Deliberately *light* preprocessing -- lowercase + whitespace collapse
-only -- and let a **combined word + character n-gram TF-IDF** representation
-absorb morphology, negation and noise instead of hand-engineering it away.
-Character n-grams (3-5) are the key move: they capture "not bad", "wasn't",
-sub-word affixes and typos without any stemming/lemmatisation, and they make
-the model robust to the messy email vocabulary that leaks past the spam gate.
+Start from deliberately *light* preprocessing -- lowercase + whitespace
+collapse only -- and let a **combined word + character n-gram TF-IDF**
+representation absorb morphology and noise instead of hand-engineering it away.
+Character n-grams (3-5) are the key move: they capture "wasn't", sub-word
+affixes and typos without any stemming/lemmatisation, and they make the model
+robust to the messy email vocabulary that leaks past the spam gate.
+
+That was the hypothesis; the ablation in ``run_task1.representation_ablation``
+tested it and only half of it survived. Stopword removal and lemmatisation both
+*cost* accuracy, as predicted. Negation marking did not: scoping ``not`` over
+the clause that follows it adds ~1.8 points to the SVM on top of the character
+n-grams, so the character n-grams evidently capture the negator's presence but
+not its scope. The default preprocessor below is therefore ``mark_negation``,
+chosen by that measurement rather than by the original assumption.
 
 Headline sparse model: a **calibrated Linear SVM** (hinge loss, the max-margin
 discriminative classifier), with probabilities recovered via Platt scaling so
@@ -51,6 +59,77 @@ def light_clean(text: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Preprocessing variants, compared head to head in the ablation.               #
+#                                                                              #
+# The claim this project makes is that heavy hand-engineered preprocessing is  #
+# not worth it once the representation carries sub-word information, so the    #
+# claim has to be tested rather than asserted. Each variant below is a drop-in #
+# ``preprocessor`` for TfidfVectorizer, so the ablation changes exactly one    #
+# thing at a time with the classifier held fixed.                              #
+# --------------------------------------------------------------------------- #
+_NEG_WORDS = {"not", "no", "never", "none", "cannot", "n't", "without", "hardly",
+              "barely", "scarcely"}
+_NEG_STOP = re.compile(r"[.,;:!?()\"]")
+
+_lemmatiser = None
+_stopwords = None
+
+
+def _nltk_stopwords():
+    """English stopwords, minus the negations -- removing 'not' destroys the
+    very signal the sentiment task depends on, a classic own goal."""
+    global _stopwords
+    if _stopwords is None:
+        from nltk.corpus import stopwords
+        _stopwords = set(stopwords.words("english")) - _NEG_WORDS - {"but", "very"}
+    return _stopwords
+
+
+def remove_stopwords(text: str) -> str:
+    """Lowercase + drop high-frequency function words (negations retained)."""
+    sw = _nltk_stopwords()
+    return " ".join(w for w in light_clean(text).split() if w not in sw)
+
+
+def lemmatise(text: str) -> str:
+    """Lowercase + WordNet lemmatisation, collapsing inflectional variants."""
+    global _lemmatiser
+    if _lemmatiser is None:
+        from nltk.stem import WordNetLemmatizer
+        _lemmatiser = WordNetLemmatizer()
+    return " ".join(_lemmatiser.lemmatize(w) for w in light_clean(text).split())
+
+
+def mark_negation(text: str) -> str:
+    """Prefix ``NOT_`` to every token between a negator and the next punctuation.
+
+    Standard negation scoping (Das & Chen 2001; Pang 2002): it turns "not good"
+    into a token distinct from "good", which a unigram bag of words otherwise
+    cannot distinguish. Character n-grams already capture some of this, so the
+    ablation measures how much is left over.
+    """
+    out, negating = [], False
+    for raw in light_clean(text).split():
+        # Mark first, then update the scope: the token carrying the closing
+        # punctuation ("good,") is still inside the negation, and only the
+        # token after it is outside.
+        out.append("not_" + raw if negating else raw)
+        if _NEG_STOP.search(raw):
+            negating = False
+        elif raw in _NEG_WORDS or raw.endswith("n't"):
+            negating = True
+    return " ".join(out)
+
+
+PREPROCESSORS = {
+    "lowercase only": light_clean,
+    "+ stopword removal": remove_stopwords,
+    "+ lemmatisation": lemmatise,
+    "+ negation marking": mark_negation,
+}
+
+
+# --------------------------------------------------------------------------- #
 # Required simplest baseline: word-list classifier (lexicon margin).           #
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -92,29 +171,37 @@ class WordListClassifier:
 # --------------------------------------------------------------------------- #
 # Shared word+char TF-IDF representation.                                      #
 # --------------------------------------------------------------------------- #
-def make_vectorizer() -> FeatureUnion:
-    """Union of word (1-2) and character (3-5) TF-IDF -- the headline feature set."""
-    word = TfidfVectorizer(
-        preprocessor=light_clean, analyzer="word", ngram_range=(1, 2),
-        sublinear_tf=True, min_df=3, max_df=0.9, strip_accents="unicode",
-    )
-    char = TfidfVectorizer(
-        preprocessor=light_clean, analyzer="char_wb", ngram_range=(3, 5),
-        sublinear_tf=True, min_df=3, max_df=0.95,
-    )
-    return FeatureUnion([("word", word), ("char", char)])
+def make_vectorizer(pre=light_clean, kinds=("word", "char")):
+    """Word (1-2) and/or character (3-5) TF-IDF over a chosen preprocessor.
+
+    ``kinds`` selects which halves to build; the default union of both is the
+    headline feature set. ``pre`` is the preprocessing variant under test, which
+    is what makes the preprocessing x representation ablation a single sweep.
+    """
+    parts = []
+    if "word" in kinds:
+        parts.append(("word", TfidfVectorizer(
+            preprocessor=pre, analyzer="word", ngram_range=(1, 2),
+            sublinear_tf=True, min_df=3, max_df=0.9, strip_accents="unicode",
+        )))
+    if "char" in kinds:
+        parts.append(("char", TfidfVectorizer(
+            preprocessor=pre, analyzer="char_wb", ngram_range=(3, 5),
+            sublinear_tf=True, min_df=3, max_df=0.95,
+        )))
+    return FeatureUnion(parts)
 
 
-def build_svm(C: float = 1.0, random_state: int = 42) -> Pipeline:
+def build_svm(C: float = 1.0, random_state: int = 42, pre=mark_negation) -> Pipeline:
     """Calibrated Linear SVM on the word+char TF-IDF union."""
     base = LinearSVC(C=C, class_weight="balanced", random_state=random_state)
     clf = CalibratedClassifierCV(base, method="sigmoid", cv=3)
-    return Pipeline([("feats", make_vectorizer()), ("clf", clf)])
+    return Pipeline([("feats", make_vectorizer(pre)), ("clf", clf)])
 
 
-def build_nb(alpha: float = 0.3) -> Pipeline:
+def build_nb(alpha: float = 0.3, pre=mark_negation) -> Pipeline:
     """Multinomial NB on the same union (the original's best family, for comparison)."""
-    return Pipeline([("feats", make_vectorizer()), ("clf", MultinomialNB(alpha=alpha))])
+    return Pipeline([("feats", make_vectorizer(pre)), ("clf", MultinomialNB(alpha=alpha))])
 
 
 # --------------------------------------------------------------------------- #
@@ -180,7 +267,8 @@ class GloVeBiLSTM:
     dim: int = 100
     hidden: int = 128
     max_len: int = 60
-    min_count: int = 2
+    min_count: int = 1     # no pruning: GloVe already supplies a good vector for
+                           # a word seen once, so a min_df cut only discards it
     dropout: float = 0.4
     lr: float = 1e-3
     batch: int = 64
@@ -282,6 +370,30 @@ class GloVeBiLSTM:
                 logits = self.net_(X[i:i + 256].to(self.device_))
                 out.append(torch.softmax(logits, dim=-1).cpu().numpy())
         return np.concatenate(out) if out else np.zeros((0, 2))
+
+    def predict(self, texts: List[str]) -> np.ndarray:
+        return self.predict_proba(texts).argmax(axis=1)
+
+
+@dataclass
+class SoftVoteEnsemble:
+    """Average the calibrated probabilities of already-fitted models.
+
+    The point of adding a sequence model was never only its own accuracy: it is
+    that a BiLSTM over embeddings makes *different* mistakes from a bag of
+    n-grams, because it is the only member that can see word order. Averaging
+    probabilities converts that disagreement into accuracy -- which is why the
+    ensemble beats every member, including the two that individually tie.
+
+    All members must expose ``predict_proba`` over the same class ordering.
+    Nothing is fitted here, so there is no extra training cost and no extra
+    hyperparameter beyond membership.
+    """
+    members: Dict[str, object] = field(default_factory=dict)
+
+    def predict_proba(self, texts: List[str]) -> np.ndarray:
+        texts = list(texts)
+        return np.mean([m.predict_proba(texts) for m in self.members.values()], axis=0)
 
     def predict(self, texts: List[str]) -> np.ndarray:
         return self.predict_proba(texts).argmax(axis=1)

@@ -5,34 +5,89 @@
     "precision": 1.0,
     "recall": 1.0,
     "f1": 0.9999999999995,
-    "fit_seconds": 1.2754302519999783
+    "fit_seconds": 0.7723643329991319
   },
   "train_kept": 8530,
-  "best_sentiment_model": "mnb_wordchar",
+  "bilstm": {
+    "glove_coverage": 0.9039089918915648,
+    "device": "mps",
+    "train_seconds": 47.06547695900008,
+    "vocab_size": 16526
+  },
+  "best_sentiment_model": "ensemble_soft_vote",
   "representation_ablation": [
     {
+      "preprocessing": "lowercase only",
       "representation": "word(1,2)",
       "val_acc": 0.7410881801125704
     },
     {
+      "preprocessing": "lowercase only",
       "representation": "char(3,5)",
       "val_acc": 0.7485928705440901
     },
     {
+      "preprocessing": "lowercase only",
       "representation": "word+char (union)",
       "val_acc": 0.7579737335834896
+    },
+    {
+      "preprocessing": "+ stopword removal",
+      "representation": "word(1,2)",
+      "val_acc": 0.7673545966228893
+    },
+    {
+      "preprocessing": "+ stopword removal",
+      "representation": "char(3,5)",
+      "val_acc": 0.7495309568480301
+    },
+    {
+      "preprocessing": "+ stopword removal",
+      "representation": "word+char (union)",
+      "val_acc": 0.7579737335834896
+    },
+    {
+      "preprocessing": "+ lemmatisation",
+      "representation": "word(1,2)",
+      "val_acc": 0.7429643527204502
+    },
+    {
+      "preprocessing": "+ lemmatisation",
+      "representation": "char(3,5)",
+      "val_acc": 0.7645403377110694
+    },
+    {
+      "preprocessing": "+ lemmatisation",
+      "representation": "word+char (union)",
+      "val_acc": 0.7673545966228893
+    },
+    {
+      "preprocessing": "+ negation marking",
+      "representation": "word(1,2)",
+      "val_acc": 0.7701688555347092
+    },
+    {
+      "preprocessing": "+ negation marking",
+      "representation": "char(3,5)",
+      "val_acc": 0.7692307692307693
+    },
+    {
+      "preprocessing": "+ negation marking",
+      "representation": "word+char (union)",
+      "val_acc": 0.7795497185741088
     }
   ],
-  "val_3way_accuracy": 0.8274874731567645,
+  "deployed_model": "ensemble_soft_vote",
+  "val_3way_accuracy": 0.8561202576950608,
   "val_3way_confusion": [
     [
-      409,
-      124,
+      451,
+      82,
       0
     ],
     [
-      117,
-      416,
+      119,
+      414,
       0
     ],
     [
@@ -41,15 +96,28 @@
       331
     ]
   ],
+  "spam_gate_audit": {
+    "n_sampled": 50,
+    "n_email_like": 44,
+    "sample_precision": 0.88,
+    "n_flagged_total": 331,
+    "agreement_with_header_rule": 1.0
+  },
   "nltk_external": {
-    "accuracy": 0.76,
+    "accuracy": 0.7385,
     "n": 2000,
+    "recall_neg": 0.979,
+    "recall_pos": 0.498,
+    "mean_p_pos": 0.3329707946340561,
+    "val_mean_p_pos": 0.4905023306884112,
+    "mean_doc_words_nltk": 746.3405,
+    "mean_doc_words_val": 20.99718574108818,
     "spam_fire_rate": 0.0,
     "n_spam_fired": 0
   },
   "test_label_distribution": {
-    "0": 537,
-    "1": 529,
+    "0": 564,
+    "1": 502,
     "-1": 368
   }
 }

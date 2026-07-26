@@ -1,4 +1,13 @@
-representation,val_acc
-"word(1,2)",0.7410881801125704
-"char(3,5)",0.7485928705440901
-word+char (union),0.7579737335834896
+preprocessing,representation,val_acc
+lowercase only,"word(1,2)",0.7410881801125704
+lowercase only,"char(3,5)",0.7485928705440901
+lowercase only,word+char (union),0.7579737335834896
++ stopword removal,"word(1,2)",0.7673545966228893
++ stopword removal,"char(3,5)",0.7495309568480301
++ stopword removal,word+char (union),0.7579737335834896
++ lemmatisation,"word(1,2)",0.7429643527204502
++ lemmatisation,"char(3,5)",0.7645403377110694
++ lemmatisation,word+char (union),0.7673545966228893
++ negation marking,"word(1,2)",0.7701688555347092
++ negation marking,"char(3,5)",0.7692307692307693
++ negation marking,word+char (union),0.7795497185741088

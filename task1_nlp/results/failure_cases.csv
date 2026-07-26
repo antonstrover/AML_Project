@@ -1,13 +1,13 @@
-text,gold,pred
-"it puts washington , as honest working man john q . archibald , on a pedestal , then keeps lifting the pedestal higher .",0,1
-"attal's hang-ups surrounding infidelity are so old-fashioned and , dare i say , outdated , it's a wonder that he couldn't have brought something fresher to the proceedings simply by accident .",0,1
-"its and pieces of the hot chick are so hilarious , and schneider's performance is so fine , it's a real shame that so much of the movie -- again , as in the animal -- is a slapdash mess .",0,1
-""" feardotcom "" has the makings of an interesting meditation on the ethereal nature of the internet and the otherworldly energies it could channel , but it simply becomes a routine shocker .",0,1
-baby-faced renner is eerily convincing as this bland blank of a man with unimaginable demons within .,1,0
-romanek keeps adding flourishes -- artsy fantasy sequences -- that simply feel wrong . they cheapen the overall effect .,0,1
-always destined to be measured against anthony asquith's acclaimed 1952 screen adaptation .,0,1
-"a guilty pleasure at best , and not worth seeing unless you want to laugh at it .",0,1
-"the film has the thrown-together feel of a summer-camp talent show : hastily written , underrehearsed , arbitrarily plotted and filled with crude humor and vulgar innuendo .",0,1
-"grant is certainly amusing , but the very hollowness of the character he plays keeps him at arms length",1,0
-"the messy emotions raging throughout this three-hour effort are instantly recognizable , allowing the film to paradoxically feel familiar and foreign at the same time .",1,0
-"the film becomes an overwhelming pleasure , and you find yourself rooting for gai's character to avoid the fate that has befallen every other carmen before her .",1,0
+text,gold,pred,confidence
+"a lightweight , uneven action comedy that freely mingles french , japanese and hollywood cultures .",0,1,0.957
+"mr . wollter and ms . seldhal give strong and convincing performances , but neither reaches into the deepest recesses of the character to unearth the quaking essence of passion , grief and fear .",0,1,0.951
+how much you are moved by the emotional tumult of [françois and michèle's] relationship depends a lot on how interesting and likable you find them .,0,1,0.935
+"if you're down for a silly hack-and-slash flick , you can do no wrong with jason x .",1,0,0.932
+"the thing about guys like evans is this : you're never quite sure where self-promotion ends and the truth begins . but as you watch the movie , you're too interested to care .",1,0,0.923
+"neither the funniest film that eddie murphy nor robert de niro has ever made , showtime is nevertheless efficiently amusing for a good while . before it collapses into exactly the kind of buddy cop comedy it set out to lampoon , anyway .",1,0,0.919
+idiotic and ugly .,1,0,0.916
+"[it] has the feel of a summer popcorn movie . nothing too deep or substantial . explosions , jokes , and sexual innuendoes abound .",1,0,0.905
+"carrying off a spot-on scottish burr , duvall ( also a producer ) peels layers from this character that may well not have existed on paper .",1,0,0.901
+underachieves only in not taking the shakespeare parallels quite far enough .,1,0,0.881
+"though the film never veers from its comic course , its unintentional parallels might inadvertently evoke memories and emotions which are anything but humorous .",1,0,0.88
+"a weird little movie that's amusing enough while you watch it , offering fine acting moments and pungent insights into modern l . a . 's show-biz and media subcultures . but it doesn't leave you with much .",0,1,0.874

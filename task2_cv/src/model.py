@@ -51,11 +51,26 @@ if _HAS_TORCH:
             self.head = nn.Conv2d(base // 2, n_landmarks, 1)
 
         def forward(self, x):                       # x: (B,1,64,64)
-            x = self.enc1(x)
-            x = self.enc2(self.pool(x))             # bottleneck 16x16
-            x = self.dec1(self.up(x))               # 32x32
-            x = self.dec2(self.up(x))               # 64x64
+            x = self.enc1(x)                        # 32 x 64 x 64
+            x = self.enc2(self.pool(x))             # 64 x 32 x 32
+            x = self.pool(x)                        # 64 x 16 x 16  (bottleneck)
+            x = self.dec1(self.up(x))               # 32 x 32 x 32
+            x = self.dec2(self.up(x))               # 16 x 64 x 64
             return self.head(x)                     # (B,K,64,64)
+
+    def gaussian_heatmaps(pts, hw, sigma: float = 1.5):
+        """Batched Gaussian targets: (B,K,2) coords -> (B,K,H,W) maps peaking at 1.
+
+        The torch twin of ``heatmap.make_heatmaps``, built on-device so targets
+        cost nothing per epoch instead of materialising ~1 GB of float32 up
+        front. ``tests_sanity.py`` asserts the two agree.
+        """
+        H, W = hw
+        ys = torch.arange(H, device=pts.device, dtype=pts.dtype).view(1, 1, H, 1)
+        xs = torch.arange(W, device=pts.device, dtype=pts.dtype).view(1, 1, 1, W)
+        px = pts[..., 0].unsqueeze(-1).unsqueeze(-1)
+        py = pts[..., 1].unsqueeze(-1).unsqueeze(-1)
+        return torch.exp(-((xs - px) ** 2 + (ys - py) ** 2) / (2 * sigma ** 2))
 
     def soft_argmax2d(heatmaps, beta: float = 10.0):
         """Differentiable coordinate decode. Returns (B,K,2) in heatmap pixels."""
@@ -68,11 +83,24 @@ if _HAS_TORCH:
         return torch.stack([ex, ey], dim=-1)
 
     def combined_loss(pred_hm, target_hm, pred_xy, target_xy, w_coord: float = 0.1):
-        """Heatmap MSE + weighted coordinate MSE (soft-argmax output)."""
-        return F.mse_loss(pred_hm, target_hm) + w_coord * F.mse_loss(pred_xy, target_xy)
+        """Heatmap MSE + weighted coordinate MSE on the soft-argmax output.
+
+        The coordinate term is measured in *grid-relative* units (coords divided
+        by the heatmap width/height) rather than pixels. In pixels it would start
+        at ~10^3 against a heatmap MSE of ~10^-2, so no sane ``w_coord`` could
+        keep the heatmap term relevant; normalised, both terms are O(10^-2) at
+        initialisation and ``w_coord`` does what it says.
+        """
+        H, W = pred_hm.shape[-2:]
+        s = pred_hm.new_tensor([float(W), float(H)])
+        return (F.mse_loss(pred_hm, target_hm)
+                + w_coord * F.mse_loss(pred_xy / s, target_xy / s))
 
 else:  # pragma: no cover - informative stub when torch is absent
     HeatmapNet = None
+
+    def gaussian_heatmaps(*a, **k):
+        raise ImportError("PyTorch not installed. `pip install torch` to use the CNN.")
 
     def soft_argmax2d(*a, **k):
         raise ImportError("PyTorch not installed. `pip install torch` to use the CNN.")

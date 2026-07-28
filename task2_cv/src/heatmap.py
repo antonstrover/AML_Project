@@ -25,10 +25,21 @@ from __future__ import annotations
 import numpy as np
 
 
-def make_heatmaps(pts: np.ndarray, out_hw, sigma: float = 1.5) -> np.ndarray:
+def make_heatmaps(pts: np.ndarray, out_hw, sigma: float = 1.5,
+                  normalise: bool = False) -> np.ndarray:
     """Return (K, Hh, Wh) Gaussian heatmaps for K landmarks.
 
     pts: (K, 2) landmark coords already scaled to the heatmap resolution.
+
+    By default the blobs peak at 1.0, which is the standard heatmap-regression
+    target (Tompson 2014, Newell 2016) and the one used for training: a
+    sum-to-one target instead peaks at 1/(2*pi*sigma^2) ~= 0.07, which drives
+    the pixel-wise MSE down to ~1e-5 and leaves the coordinate term of the loss
+    to dominate by six orders of magnitude -- silently turning the model back
+    into the direct coordinate regressor this approach exists to replace.
+
+    ``normalise=True`` returns the sum-to-one form, which is what ``soft_argmax``
+    builds internally when it decodes; both decode to the same coordinates.
     """
     Hh, Wh = out_hw
     K = pts.shape[0]
@@ -38,7 +49,7 @@ def make_heatmaps(pts: np.ndarray, out_hw, sigma: float = 1.5) -> np.ndarray:
     for k, (px, py) in enumerate(pts):
         g = np.exp(-((xs - px) ** 2 + (ys - py) ** 2) / (2 * sigma ** 2))
         s = g.sum()
-        hm[k] = (g / s) if s > 0 else g          # normalised -> a spatial pmf
+        hm[k] = (g / s) if (normalise and s > 0) else g
     return hm
 
 

@@ -21,8 +21,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 from augment import hflip, FLIP_PERM, affine
 from heatmap import make_heatmaps, soft_argmax
 from shape_model import ShapeModelRegressor, mean_face_baseline
-from evaluate import normalised_errors, ced, auc_ced
-from dataset import preprocess, to_original_resolution, PreprocConfig
+from evaluate import (auc_ced, ced, euclid_dist, normalised_errors, pixel_errors,
+                      pose_proxies, threshold_rates)
+from dataset import preprocess, to_original_resolution, PreprocConfig, save_as_csv
 
 PASS, FAIL = "PASS", "FAIL"
 results = []
@@ -112,6 +113,80 @@ check(f"coord round-trip exact (max err={np.abs(restored-big_pts).max():.4f})",
       np.allclose(restored, big_pts, atol=1e-3))
 check("preprocessed image is 64x64 float in [0,1]",
       proc_img.shape == (64, 64) and proc_img.dtype == np.float32 and proc_img.max() <= 1.0)
+
+# 6. torch heatmap targets agree with the NumPy reference ------------------- #
+# The training loop builds targets on-device for speed; if they drifted from the
+# unit-tested NumPy version the model would train against a different objective
+# from the one the report describes, silently.
+try:
+    import torch
+    from model import HeatmapNet, gaussian_heatmaps, soft_argmax2d
+
+    # The output map must be the SAME resolution as the input, because the
+    # landmark coordinates the loss compares against live in input pixels. An
+    # encoder/decoder that pools once and upsamples twice silently emits a
+    # 128x128 map, placing every Gaussian at half its correct relative position
+    # -- the network then trains happily against a wrong target and predicts
+    # near the image centre for everything.
+    net = HeatmapNet(n_landmarks=5)
+    out = net(torch.zeros(2, 1, 64, 64))
+    check(f"HeatmapNet preserves input resolution (got {tuple(out.shape)})",
+          out.shape == (2, 5, 64, 64))
+    check("soft-argmax decodes network output to (B,K,2)",
+          soft_argmax2d(out).shape == (2, 5, 2))
+
+    pts_t = torch.tensor(peak[None], dtype=torch.float32)      # (1,5,2)
+    torch_hm = gaussian_heatmaps(pts_t, (64, 64), sigma=1.5)[0].numpy()
+    numpy_hm = make_heatmaps(peak, (64, 64), sigma=1.5)
+    check(f"torch heatmap targets match the NumPy reference "
+          f"(max abs diff={np.abs(torch_hm-numpy_hm).max():.2e})",
+          np.allclose(torch_hm, numpy_hm, atol=1e-5))
+    check("training targets peak at 1.0, not at the 1/(2*pi*sigma^2) pmf value",
+          abs(torch_hm.max() - 1.0) < 1e-3)
+except ImportError:
+    print("[SKIP] torch heatmap parity (PyTorch not installed)")
+
+# 7. the graded metric: raw pixels at original resolution -------------------- #
+a = np.array([[[0.0, 0.0], [3.0, 4.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]])
+b = np.zeros_like(a)
+check("euclid_dist is the plain Euclidean distance (3,4 -> 5)",
+      np.allclose(euclid_dist(a, b).reshape(1, 5), [[0, 5, 0, 0, 0]]))
+check("pixel_errors keeps the (N, K) layout", pixel_errors(a, b).shape == (1, 5))
+rates = threshold_rates(np.array([1.0, 4.0, 9.0, 16.0]), [2.0, 10.0, 100.0])
+check("threshold_rates counts images at or below each threshold",
+      rates == {"2": 0.25, "10": 0.75, "100": 1.0})
+check("threshold_rates is monotonic in the threshold",
+      list(rates.values()) == sorted(rates.values()))
+
+# pose proxies: a level frontal face reads as roll 0, yaw 0
+frontal = np.array([[[20., 30.], [44., 30.], [32., 40.], [24., 50.], [40., 50.]]])
+roll, yaw = pose_proxies(frontal)
+check("level eyes give zero roll and a centred nose gives zero yaw",
+      abs(roll[0]) < 1e-6 and abs(yaw[0]) < 1e-6)
+rolled = frontal.copy(); rolled[0, 1, 1] += 24.0        # drop the right eye
+check("tilting the eye line is detected as roll", abs(pose_proxies(rolled)[0][0]) > 40)
+turned = frontal.copy(); turned[0, 2, 0] += 12.0        # push the nose sideways
+check("an off-centre nose is detected as yaw", pose_proxies(turned)[1][0] > 0.4)
+
+# 8. submission format ------------------------------------------------------- #
+import tempfile
+with tempfile.TemporaryDirectory() as d:
+    pts554 = rng.uniform(0, 256, (554, 5, 2))
+    save_as_csv(pts554, d)
+    lines = open(os.path.join(d, "results_task2.csv")).read().splitlines()
+    check("save_as_csv writes 554 headerless rows", len(lines) == 554)
+    check("each row is 10 comma-separated values",
+          all(len(l.split(",")) == 10 for l in lines[:5]))
+    check("values round-trip within float precision",
+          np.allclose(np.loadtxt(os.path.join(d, "results_task2.csv"), delimiter=","),
+                      pts554.reshape(554, 10)))
+    for bad, why in ((np.zeros((100, 5, 2)), "wrong image count"),
+                     (np.zeros((554, 7, 2)), "wrong point count")):
+        try:
+            save_as_csv(bad, d); ok = False
+        except AssertionError:
+            ok = True
+        check(f"save_as_csv rejects the {why}", ok)
 
 # summary -------------------------------------------------------------------- #
 n_pass = sum(s == PASS for _, s in results)

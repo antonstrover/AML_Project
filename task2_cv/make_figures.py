@@ -1,7 +1,13 @@
-"""Generate Task 2 figures: pipeline/aug flowcharts, CNN architecture, and demo
-CED + robustness plots (the latter on synthetic data to verify the eval code)."""
+"""Generate the Task 2 *method* diagrams: the preprocessing and augmentation
+flowcharts and the heatmap-CNN architecture.
+
+Nothing here plots results. Every CED curve, boxplot, landmark example and
+robustness sweep is produced by run_task2.py from the real validation set --
+this file used to emit synthetic demo versions of them as placeholders, and
+those are exactly what the previous submission was marked down for. If a plot
+shows numbers, it came from the real data.
+"""
 import os, sys
-import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -61,20 +67,4 @@ ax.text(5.5, 0.55, "loss = MSE(pred heatmap, Gaussian target) + 0.1 * MSE(decode
         ha="center", fontsize=8.5, style="italic")
 fig.tight_layout(); fig.savefig(os.path.join(FIG, "cnn_heatmap_arch.png"), dpi=140); plt.close(fig)
 
-# 4 & 5. demo CED + robustness on synthetic data (proves eval plotting works)
-from evaluate import plot_ced, plot_boxplots, normalised_errors
-rng = np.random.default_rng(1)
-gt = rng.uniform(8, 56, (200, 5, 2))
-# three synthetic "models" with increasing accuracy
-curves = {
-    "mean-face (floor)": normalised_errors(gt + rng.normal(0, 6, gt.shape), gt),
-    "HOG+shape model":   normalised_errors(gt + rng.normal(0, 2.5, gt.shape), gt),
-    "heatmap CNN":       normalised_errors(gt + rng.normal(0, 1.3, gt.shape), gt),
-}
-ts = np.linspace(0, 0.30, 100)
-plot_ced(curves, ts, os.path.join(FIG, "ced_demo.png"),
-         title="CED (DEMO on synthetic data - not real faces)")
-plot_boxplots(curves, os.path.join(FIG, "boxplot_demo.png"),
-              title="Per-point error (DEMO on synthetic data)")
-
-print("Task 2 figures written:", sorted(os.listdir(FIG)))
+print("Task 2 method diagrams written. Result figures come from run_task2.py.")

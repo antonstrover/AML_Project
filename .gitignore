@@ -13,3 +13,12 @@ task2_cv/data/
 *.joblib
 *.pt
 *.pth
+
+# report build intermediate (REPORT.md and REPORT.pdf are tracked)
+REPORT.html
+submission.zip
+
+# working notes, not part of the submission
+plan.md
+CLAUDE.md
+docs/

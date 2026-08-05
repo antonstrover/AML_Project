@@ -72,13 +72,25 @@ def robustness_curve(predict_fn: Callable, images: np.ndarray, gt: np.ndarray,
     return {"levels": list(levels), "auc_ced": aucs}
 
 
+UNITS = {"noise": "Gaussian noise sigma (intensity in [0,1])",
+         "rotation": "rotation (degrees)",
+         "scale": "scale factor",
+         "brightness": "brightness offset"}
+
+
 def plot_robustness(curves_by_model: Dict[str, Dict[str, list]], kind: str, path: str):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    plt.figure(figsize=(5.5, 4))
+    plt.figure(figsize=(6.0, 4.2))
     for name, c in curves_by_model.items():
-        plt.plot(c["levels"], c["auc_ced"], marker="o", lw=2, label=name)
-    plt.xlabel(f"{kind} level"); plt.ylabel("AUC-CED (higher = better)")
-    plt.title(f"Robustness to {kind}: augmented vs not"); plt.legend()
-    plt.grid(alpha=.3); plt.tight_layout(); plt.savefig(path, dpi=130); plt.close()
+        base = c["auc_ced"][0]
+        retained = 100 * c["auc_ced"][-1] / base if base else 0.0
+        plt.plot(c["levels"], c["auc_ced"], marker="o", lw=2,
+                 label=f"{name} ({retained:.0f}% retained)")
+    plt.xlabel(UNITS.get(kind, f"{kind} level"))
+    plt.ylabel("AUC-CED (higher = better)")
+    plt.title(f"Robustness to {kind}: the degradation gap is the argument",
+              fontsize=11)
+    plt.legend(fontsize=8); plt.grid(alpha=.3); plt.ylim(bottom=0)
+    plt.tight_layout(); plt.savefig(path, dpi=140); plt.close()

@@ -1,15 +1,20 @@
-"""Sanity checks for Task 2 logic (runs without the image data or a GPU).
+"""The checks of the Task 2 code.
 
-These do NOT claim face-alignment accuracy -- there is no face data bundled.
-They verify that the *mechanics* the deep/classical pipelines depend on are
-correct, which is where face-alignment bugs actually hide:
+These checks operate without the image data and without a GPU.
 
-  1. horizontal flip swaps the eye/mouth landmark indices and round-trips
-  2. soft-argmax recovers a known heatmap peak to sub-pixel accuracy
-  3. the PCA shape model reconstructs shapes and the HOG->shape regressor
-     beats the mean-face floor on a synthetic-but-structured task
-  4. inter-ocular normalised error and CED behave as defined
-  5. resize <-> original-resolution coordinate round-trip is exact
+These checks do NOT measure the accuracy of the face alignment, because this
+archive contains no face data. The checks make sure that the mechanisms of the
+deep model and of the classical model are correct. Almost all the errors in a
+face-alignment program are in these mechanisms:
+
+  1. The horizontal flip changes the indices of the eye landmarks and of the
+     mouth landmarks. Two flips give the initial data again.
+  2. The soft-argmax finds a known peak of a heatmap to less than one pixel.
+  3. The PCA shape model calculates the shapes again. The regression from the
+     HOG to the shape is better than the mean face on artificial data with a
+     known structure.
+  4. The normalised error and the CED operate as their definitions say.
+  5. The change to the resized space and back to the original space is exact.
 """
 import os
 import sys
@@ -34,41 +39,45 @@ def check(name, cond):
     print(f"[{PASS if cond else FAIL}] {name}")
 
 
-# 1. flip index swap + round-trip ------------------------------------------- #
+# 1. the flip changes the indices, and two flips give the initial data ------ #
 img = np.random.rand(64, 64).astype(np.float32)
-pts = np.array([[10, 20], [50, 22], [30, 35], [18, 50], [44, 51]], float)  # L/R eye, nose, L/R mouth
+pts = np.array([[10, 20], [50, 22], [30, 35], [18, 50], [44, 51]], float)  # the
+# left eye, the right eye, the nose, the left mouth corner, the right corner
 fimg, fpts = hflip(img, pts)
-# left eye (idx0) should now sit on the right side of the image
-# A correct flip keeps the convention "left-eye index sits on image-left":
-# new idx0 (left eye) = mirrored original right eye -> left half;
-# new idx1 (right eye) = mirrored original left eye -> right half.
+# A correct flip keeps this rule: the landmark with the index 0 is on the left
+# side of the image. Thus the new index 0 holds the mirror image of the initial
+# right eye, which is in the left half. The new index 1 holds the mirror image
+# of the initial left eye, which is in the right half.
 check("flip preserves left-eye-on-left convention",
       fpts[0, 0] < 32 and fpts[1, 0] > 32)
-# double flip restores original image and points exactly
+# Two flips give the initial image and the initial landmarks exactly.
 ffimg, ffpts = hflip(fimg, fpts)
 check("hflip round-trips image", np.allclose(ffimg, img))
 check("hflip round-trips points", np.allclose(ffpts, pts))
 check("flip perm swaps eyes (0<->1) and mouth (3<->4), nose fixed",
       FLIP_PERM.tolist() == [1, 0, 2, 4, 3])
 
-# 2. soft-argmax recovers a known peak -------------------------------------- #
-# interior peaks: expectation decode is sub-pixel accurate
+# 2. the soft-argmax finds a known peak ------------------------------------- #
+# The decode is accurate to less than one pixel for a peak in the image.
 peak = np.array([[40.0, 12.0], [8.0, 55.0], [32.0, 32.0], [20.0, 44.0], [50.0, 30.0]])
 hm = make_heatmaps(peak, (64, 64), sigma=1.5)
-dec = soft_argmax(hm)  # positive Gaussian heatmap -> direct spatial expectation
+dec = soft_argmax(hm)  # a positive Gaussian heatmap gives the expected position
 err = np.linalg.norm(dec - peak, axis=1).max()
 check(f"soft-argmax sub-pixel on interior peaks (max err={err:.3f}px < 0.5)", err < 0.5)
-# document the known boundary bias (expectation pulls inward when the Gaussian is clipped)
+# This check records the known error at the edge of the image. The image
+# contains only one part of the Gaussian there. Thus the expected position
+# moves to the centre of the image.
 edge = make_heatmaps(np.array([[1.0, 1.0]]), (64, 64), sigma=1.5)
 edge_err = np.linalg.norm(soft_argmax(edge)[0] - [1.0, 1.0])
 check(f"boundary peak bias is small and inward ({edge_err:.2f}px)", 0 < edge_err < 2.0)
 
-# 3. PCA shape model + HOG regression on a structured synthetic task -------- #
-# Build synthetic "faces": a base 5-point shape morphed by 2 latent factors,
-# rendered as blurred dots so HOG sees something correlated with the shape.
+# 3. the PCA shape model and the HOG regression on artificial data ---------- #
+# The code makes artificial faces. Each face is a base shape with 5 landmarks.
+# Two latent factors change the shape. The code then draws each landmark as a
+# dot and applies a blur. Thus the HOG shows data that changes with the shape.
 rng = np.random.default_rng(0)
 base = np.array([[20, 25], [44, 25], [32, 38], [24, 50], [40, 50]], float)
-modes = np.array([[[3, 0]] * 5, [[0, 4]] * 5], float)  # 2 shape modes
+modes = np.array([[[3, 0]] * 5, [[0, 4]] * 5], float)  # the 2 shape modes
 def render(shape):
     im = np.zeros((64, 64), np.float32)
     for (x, y) in shape:
@@ -94,7 +103,7 @@ check(f"shape model beats mean-face floor ({e_model:.3f} < {e_mean:.3f})", e_mod
 check(f"PCA captures >90% shape variance ({sm.explained_variance()[:2].sum():.2f})",
       sm.explained_variance()[:2].sum() > 0.90)
 
-# 4. metric + CED behaviour -------------------------------------------------- #
+# 4. the behaviour of the metric and of the CED ------------------------------ #
 perfect = normalised_errors(gt, gt)
 check("zero error when pred==gt", np.allclose(perfect, 0))
 ts = np.linspace(0, 0.2, 50)
@@ -104,7 +113,7 @@ check("CED ends at 1.0", abs(c[-1] - 1.0) < 1e-6)
 check(f"AUC-CED in (0,1) ({auc_ced(normalised_errors(pred, gt)):.3f})",
       0 < auc_ced(normalised_errors(pred, gt)) < 1)
 
-# 5. resize <-> original coordinate round-trip ------------------------------ #
+# 5. the change to the resized space and back to the original space --------- #
 big = (rng.random((100, 80, 3)) * 255).astype(np.uint8)
 big_pts = np.array([[20, 30], [60, 32], [40, 50], [25, 70], [55, 72]], float)
 proc_img, proc_pts, scale = preprocess(big, big_pts, PreprocConfig(out_size=64))
@@ -114,20 +123,21 @@ check(f"coord round-trip exact (max err={np.abs(restored-big_pts).max():.4f})",
 check("preprocessed image is 64x64 float in [0,1]",
       proc_img.shape == (64, 64) and proc_img.dtype == np.float32 and proc_img.max() <= 1.0)
 
-# 6. torch heatmap targets agree with the NumPy reference ------------------- #
-# The training loop builds targets on-device for speed; if they drifted from the
-# unit-tested NumPy version the model would train against a different objective
-# from the one the report describes, silently.
+# 6. the PyTorch targets are the same as the NumPy targets ------------------ #
+# The training loop makes the targets on the device, because this method is
+# faster. If these targets became different from the NumPy targets, the model
+# would train against a different objective from the objective in the report.
+# The program would give no error message.
 try:
     import torch
     from model import HeatmapNet, gaussian_heatmaps, soft_argmax2d
 
-    # The output map must be the SAME resolution as the input, because the
-    # landmark coordinates the loss compares against live in input pixels. An
-    # encoder/decoder that pools once and upsamples twice silently emits a
-    # 128x128 map, placing every Gaussian at half its correct relative position
-    # -- the network then trains happily against a wrong target and predicts
-    # near the image centre for everything.
+    # The output heatmap must have the SAME resolution as the input image,
+    # because the landmark coordinates in the loss are in input pixels. An
+    # encoder-decoder with one pool operation and two upsample operations makes
+    # a 128x128 heatmap. Then each Gaussian is at one half of its correct
+    # relative position. The network then trains against an incorrect target
+    # and gives a prediction near the centre of each image.
     net = HeatmapNet(n_landmarks=5)
     out = net(torch.zeros(2, 1, 64, 64))
     check(f"HeatmapNet preserves input resolution (got {tuple(out.shape)})",
@@ -146,7 +156,7 @@ try:
 except ImportError:
     print("[SKIP] torch heatmap parity (PyTorch not installed)")
 
-# 7. the graded metric: raw pixels at original resolution -------------------- #
+# 7. the metric of the marker: raw pixels at the original resolution --------- #
 a = np.array([[[0.0, 0.0], [3.0, 4.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]])
 b = np.zeros_like(a)
 check("euclid_dist is the plain Euclidean distance (3,4 -> 5)",
@@ -158,17 +168,17 @@ check("threshold_rates counts images at or below each threshold",
 check("threshold_rates is monotonic in the threshold",
       list(rates.values()) == sorted(rates.values()))
 
-# pose proxies: a level frontal face reads as roll 0, yaw 0
+# The pose values of a frontal face with level eyes are roll 0 and yaw 0.
 frontal = np.array([[[20., 30.], [44., 30.], [32., 40.], [24., 50.], [40., 50.]]])
 roll, yaw = pose_proxies(frontal)
 check("level eyes give zero roll and a centred nose gives zero yaw",
       abs(roll[0]) < 1e-6 and abs(yaw[0]) < 1e-6)
-rolled = frontal.copy(); rolled[0, 1, 1] += 24.0        # drop the right eye
+rolled = frontal.copy(); rolled[0, 1, 1] += 24.0        # move the right eye down
 check("tilting the eye line is detected as roll", abs(pose_proxies(rolled)[0][0]) > 40)
-turned = frontal.copy(); turned[0, 2, 0] += 12.0        # push the nose sideways
+turned = frontal.copy(); turned[0, 2, 0] += 12.0        # move the nose sideways
 check("an off-centre nose is detected as yaw", pose_proxies(turned)[1][0] > 0.4)
 
-# 8. submission format ------------------------------------------------------- #
+# 8. the format of the submission file --------------------------------------- #
 import tempfile
 with tempfile.TemporaryDirectory() as d:
     pts554 = rng.uniform(0, 256, (554, 5, 2))
@@ -188,7 +198,7 @@ with tempfile.TemporaryDirectory() as d:
             ok = True
         check(f"save_as_csv rejects the {why}", ok)
 
-# summary -------------------------------------------------------------------- #
+# the summary ---------------------------------------------------------------- #
 n_pass = sum(s == PASS for _, s in results)
 print(f"\n{n_pass}/{len(results)} checks passed")
 sys.exit(0 if n_pass == len(results) else 1)

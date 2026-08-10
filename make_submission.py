@@ -1,21 +1,24 @@
-"""Build the submission zip and check it against the brief's requirements.
+"""Make the zip file of the submission and examine its contents.
 
-The brief asks for one archive containing the report, the two prediction CSVs
-and the annotated source, and explicitly says not to include the original
-datasets. This script assembles exactly that and refuses to write an archive
-that would lose marks on a format rule:
+The brief asks for one archive. The archive must contain the report, the two
+CSV files of the predictions and the source code with its comments. The brief
+also says that the archive must not contain the initial data sets.
 
-  * results_task1.csv exists, has 1434 rows, no header, and three distinct
-    labels (0, 1 and the spam dummy);
-  * results_task2.csv exists, has 554 rows of 10 values, all inside [0, 256]
-    -- which is what proves the predictions were scaled back to the original
-    resolution rather than left at the network's 64x64;
-  * the report PDF is present.
+This script makes that archive. The script does not write the archive if a
+rule about the format is not obeyed. It examines these rules:
 
-Excluded: the .npz and .csv datasets, .venv, GloVe vectors, model weights,
-caches, and anything else not source, results or figures.
+  * The file results_task1.csv exists. It has 1434 rows and no header. It
+    contains three different labels: 0, 1 and the dummy label for spam.
+  * The file results_task2.csv exists. It has 554 rows with 10 values in each
+    row. Each value is in the range [0, 256]. Thus the values are at the
+    original resolution and not at the resolution of 64x64 of the network.
+  * The PDF file of the report exists.
 
-Run:  python make_submission.py
+The archive does not contain these items: the .npz data files, the .csv data
+files, the directory .venv, the GloVe vectors, the model files, the caches,
+and each other file that is not source code, a result or a figure.
+
+To start the script, use the command:  python make_submission.py
 """
 from __future__ import annotations
 

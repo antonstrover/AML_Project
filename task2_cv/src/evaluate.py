@@ -1,33 +1,37 @@
 """Evaluation metrics and plots for face alignment (Task 2).
 
-Metric (W09_L18, stated as a numbered equation in the report):
+W09_L18 gives the metric. The report gives it as a numbered equation:
 
-    For image i, landmark k, with prediction p_ik and ground truth g_ik,
-    the normalised point-to-point error is
+    Let p_ik be the prediction for the image i and the landmark k. Let g_ik be
+    the applicable ground truth. Then the normalised point-to-point error is
 
         e_ik = || p_ik - g_ik || / d_i      where d_i = || g_i,0 - g_i,1 ||
 
-    i.e. the Euclidean error normalised by the inter-ocular distance (between
-    the two eye landmarks, indices 0 and 1). Normalising removes the effect of
-    image resolution and face size, exactly as the lecture requires.
+    Thus the metric is the Euclidean error divided by the inter-ocular
+    distance. The inter-ocular distance is the distance between the two eye
+    landmarks, which have the indices 0 and 1. This division removes the
+    effect of the image resolution and the effect of the face size. The
+    lecture makes this division necessary.
 
-We report the mean/median per landmark and the Cumulative Error Distribution
-(CED): the fraction of points with normalised error below a sweeping
-threshold. One CED line per approach on shared axes is the headline figure.
+This module calculates the mean error and the median error for each landmark.
+It also calculates the Cumulative Error Distribution (CED). The CED is the
+fraction of the landmarks with a normalised error less than a threshold. The
+primary figure shows one CED line for each approach on the same axes.
 
-Two metrics are reported side by side, because they answer different questions:
+This module gives two metrics together, because they give different data:
 
-  * ``euclid_dist`` -- the worksheet's own per-point Euclidean distance, in RAW
-    pixels at the original 256x256 resolution. This is the quantity the graders
-    measure, so it is the one the deployed model is selected on.
-  * ``normalised_errors`` -- the same distance divided by the inter-ocular
-    distance, which is scale-invariant and therefore the fair way to compare
-    models across faces of different size.
+  * euclid_dist is the Euclidean distance for each landmark from the
+    worksheet. Its unit is RAW pixels at the original resolution of 256x256.
+    The markers measure this quantity. Thus the code selects the model with
+    this metric.
+  * normalised_errors is the same distance divided by the inter-ocular
+    distance. This metric does not change with the scale. Thus it compares
+    models correctly across faces of different sizes.
 
-The brief marks accuracy as "% of images with error below a certain threshold",
-i.e. a *point on the CED* rather than a mean. ``threshold_rates`` reports
-exactly that, and model selection uses it: a model with a lower mean but a
-fatter tail scores worse under this rule.
+The brief defines the accuracy as the percentage of the images with an error
+less than a threshold. This value is a point on the CED, not a mean. The
+function threshold_rates calculates it, and the code selects the model with
+it. Thus a model with a low mean but many large errors gets a low score.
 """
 from __future__ import annotations
 
@@ -54,27 +58,34 @@ def euclid_dist(pred_pts, gt_pts):
 
 
 def pixel_errors(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
-    """(N, K) raw Euclidean errors, via the worksheet's ``euclid_dist``.
+    """Calculate the raw Euclidean errors as an (N, K) array.
 
-    Inputs must already be at ORIGINAL 256x256 resolution -- that is the space
-    the assignment's error is defined in.
+    The function uses euclid_dist from the worksheet.
+
+    Give the landmarks at the ORIGINAL resolution of 256x256. The assignment
+    defines its error in this space.
     """
     n, k, _ = pred.shape
     return euclid_dist(pred, gt).reshape(n, k)
 
 
 def threshold_rates(per_image_err: np.ndarray, thresholds: Sequence[float]) -> Dict[str, float]:
-    """Fraction of IMAGES whose error is below each threshold (the graded rule).
+    """Calculate the fraction of the IMAGES with an error less than a threshold.
 
-    ``per_image_err`` is one number per image (we use the mean over its five
-    landmarks), so the result reads directly as "x% of faces are localised to
-    within t pixels".
+    The markers use this rule.
+
+    The argument per_image_err holds one value for each image. This code uses
+    the mean of the errors of the five landmarks. Thus each result gives the
+    percentage of the faces with all landmarks in a distance of t pixels.
     """
     return {f"{float(t):g}": float((per_image_err <= t).mean()) for t in thresholds}
 
 
 def normalised_errors(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
-    """Return (N, K) inter-ocular-normalised per-landmark errors."""
+    """Calculate the error of each landmark as an (N, K) array.
+
+    The function divides each error by the inter-ocular distance.
+    """
     d = np.linalg.norm(gt[:, LEFT_EYE] - gt[:, RIGHT_EYE], axis=1)      # (N,)
     d = np.maximum(d, 1e-6)
     dist = np.linalg.norm(pred - gt, axis=2)                            # (N, K)
@@ -82,20 +93,27 @@ def normalised_errors(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
 
 
 def ced(errors_flat: np.ndarray, thresholds: np.ndarray) -> np.ndarray:
-    """Cumulative Error Distribution: P(error <= t) for each t."""
+    """Calculate the Cumulative Error Distribution.
+
+    The function calculates P(error <= t) for each threshold t.
+    """
     e = errors_flat.ravel()
     return np.array([(e <= t).mean() for t in thresholds])
 
 
 def auc_ced(errors_flat: np.ndarray, max_thr: float = 0.10) -> float:
-    """Area under the CED up to max_thr, normalised to [0,1] (higher = better)."""
+    """Calculate the area below the CED between 0 and max_thr.
+
+    The function divides the area by max_thr. Thus the result is in the range
+    [0,1]. A large value shows a good model.
+    """
     ts = np.linspace(0, max_thr, 100)
     c = ced(errors_flat, ts)
     return float(np.trapezoid(c, ts) / max_thr)
 
 
 def per_landmark_summary(errors: np.ndarray) -> Dict[str, List[float]]:
-    """Per-landmark mean and median normalised error."""
+    """Calculate the mean and the median normalised error of each landmark."""
     return {"mean": errors.mean(axis=0).tolist(),
             "median": np.median(errors, axis=0).tolist()}
 
@@ -111,11 +129,11 @@ def plot_ced(curves: Dict[str, np.ndarray], thresholds: np.ndarray, path: str,
              title: str = "Cumulative Error Distribution",
              xlabel: str = "inter-ocular normalised error threshold",
              markers: Sequence[float] = (), show_auc: bool = True):
-    """CED for each approach on shared axes.
+    """Plot the CED of each approach on the same axes.
 
-    ``markers`` draws vertical lines at the operating thresholds the accuracy
-    component is graded on, so the marker can read the graded quantity straight
-    off the figure instead of inferring it from a mean.
+    The argument markers gives the thresholds of the accuracy score. The
+    function draws a vertical line at each one. Thus a marker can read the
+    score from the figure and does not calculate it from a mean.
     """
     plt = _plt()
     plt.figure(figsize=(6.0, 4.2))
@@ -147,10 +165,13 @@ def plot_boxplots(curves: Dict[str, np.ndarray], path: str,
 def plot_landmark_boxplots(errors_by_model: Dict[str, np.ndarray], path: str,
                            title: str = "Error by landmark",
                            ylabel: str = "pixel error at 256x256"):
-    """Grouped boxplots: one group per landmark, one box per model within it.
+    """Plot a group of boxplots for each landmark.
 
-    This is the figure that exposes *which* landmark each model struggles with
-    (mouth corners are the usual answer, the nose the usual best).
+    Each group contains one box for each model.
+
+    This figure shows the landmark that is most difficult for each model.
+    Usually the corners of the mouth give the largest error. Usually the nose
+    gives the smallest error.
     """
     plt = _plt()
     names = list(errors_by_model)
@@ -175,14 +196,18 @@ def plot_landmark_boxplots(errors_by_model: Dict[str, np.ndarray], path: str,
 
 
 def pose_proxies(gt: np.ndarray):
-    """Cheap head-pose proxies read straight off the ground-truth points.
+    """Calculate two simple values that show the pose of the head.
 
-    roll : angle of the eye line, in degrees (0 = level eyes).
-    yaw  : the nose's horizontal offset from the eye midpoint, divided by the
-           inter-ocular distance. Near 0 for a frontal face; it grows in
-           magnitude as the head turns, because the nose projects toward the
-           near eye. It is a proxy, not a calibrated angle, which is all the
-           systematic-bias argument needs.
+    The function uses only the ground-truth landmarks.
+
+    roll : the angle of the line between the eyes, in degrees. A value of 0
+           shows that the two eyes are at the same height.
+    yaw  : the horizontal distance from the centre point between the eyes to
+           the nose, divided by the inter-ocular distance. The value is
+           approximately 0 for a frontal face. The value increases when the
+           head turns, because the nose moves towards the nearer eye. This
+           value is an indication, not a calibrated angle. The argument about
+           the systematic error does not need more accuracy.
     """
     d = gt[:, RIGHT_EYE] - gt[:, LEFT_EYE]
     roll = np.degrees(np.arctan2(d[:, 1], d[:, 0]))
@@ -194,7 +219,11 @@ def pose_proxies(gt: np.ndarray):
 
 def plot_error_vs_pose(per_image_err, roll, yaw, path,
                        title: str = "Error against head pose"):
-    """Scatter + binned trend of per-image error against roll and the yaw proxy."""
+    """Plot the error of each image against the roll and against the yaw.
+
+    The figure shows a scatter plot. It also shows the mean error in each
+    group of values.
+    """
     plt = _plt()
     fig, axes = plt.subplots(1, 2, figsize=(9.0, 3.8))
     for ax, v, lab in ((axes[0], np.abs(roll), "|head roll| (degrees)"),
@@ -219,10 +248,14 @@ def plot_error_vs_pose(per_image_err, roll, yaw, path,
 
 def plot_landmark_grid(images, pred, gt, idx, path, title, ncols: int = 4,
                        errs=None):
-    """Grid of faces with predictions (red +) and, if given, ground truth (green x).
+    """Plot a grid of faces with their landmarks.
 
-    ``images`` are the ORIGINAL 256x256 frames and ``pred``/``gt`` the points in
-    that same space, so what is drawn is exactly what gets submitted.
+    A red + shows a prediction. A green x shows a ground-truth landmark, if
+    you give the ground truth.
+
+    The argument images holds the ORIGINAL images of 256x256 pixels. The
+    arguments pred and gt hold landmarks in the same space. Thus the figure
+    shows the same data as the submission file.
     """
     plt = _plt()
     idx = list(idx)

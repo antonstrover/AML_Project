@@ -1,20 +1,26 @@
-"""Robustness analysis harness.
+"""Tools for the analysis of the robustness.
 
-Stress-tests a trained predictor on the validation set under increasing
-perturbation and plots how the CED (or a summary error) degrades. The headline
-comparison is a model trained WITH augmentation vs WITHOUT: the augmented model
-should degrade more gracefully, demonstrating the W10_L20 claim that
-augmentation "teaches the network transformations".
+This module applies a changed version of the validation set to a trained
+model. The change becomes larger at each step. The module then plots the
+decrease of the CED or of a summary error.
 
-Perturbations (W09_L17/W10_L20 vocabulary):
-    * Gaussian noise   (sigma sweep)         -- HOG's contrast normalisation
-                                                and conv equivariance both help
-    * rotation         (degree sweep)        -- HOG ~invariant to small rot
-    * scale            (factor sweep)
-    * brightness       (offset sweep)
+The primary comparison is a model with augmentation against a model without
+augmentation. The error of the augmented model must increase more slowly.
+This result shows the statement in W10_L20: an augmentation teaches the
+transformations to the network.
 
-A ``predict_fn(images) -> (N,5,2)`` abstraction lets the same harness drive the
-CNN, the shape-model regressor or the mean-face baseline interchangeably.
+The module applies these changes. The words are from W09_L17 and W10_L20:
+
+    * Gaussian noise, with a sweep of sigma. The contrast normalisation of the
+      HOG and the equivariance of a convolution both decrease this effect.
+    * A rotation, with a sweep of the angle in degrees. The HOG is
+      approximately invariant to a small rotation.
+    * A scale, with a sweep of the factor.
+    * A brightness offset, with a sweep of the offset.
+
+The module calls a function predict_fn(images) that returns an (N,5,2) array.
+Thus the same code can test the CNN, the shape-model regressor and the
+mean-face baseline.
 """
 from __future__ import annotations
 
@@ -43,9 +49,11 @@ def _perturb(images, kind: str, level: float, rng):
 
 
 def _perturb_points(pts, kind, level, hw):
-    """Apply the geometric perturbations to the ground-truth points too, so the
-    error is measured against the perturbed target (noise/brightness leave
-    points unchanged)."""
+    """Apply the geometric change to the ground-truth landmarks.
+
+    Thus the code measures the error against the changed target. Noise and a
+    brightness offset do not move a landmark.
+    """
     if kind in ("noise", "brightness"):
         return pts
     h, w = hw
@@ -60,7 +68,7 @@ def _perturb_points(pts, kind, level, hw):
 
 def robustness_curve(predict_fn: Callable, images: np.ndarray, gt: np.ndarray,
                      kind: str, levels: List[float], seed: int = 0) -> Dict[str, list]:
-    """Return AUC-CED at each perturbation level for one predictor."""
+    """Calculate the AUC-CED of one model at each level of the change."""
     rng = np.random.default_rng(seed)
     hw = images.shape[1:3]
     aucs = []

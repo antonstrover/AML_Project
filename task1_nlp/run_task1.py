@@ -1,9 +1,11 @@
-"""End-to-end Task 1 pipeline.
+"""The full sequence of Task 1.
 
-Run:  python run_task1.py
-Produces figures/, results/, models/ and submission/results_task1.csv.
+To start the sequence, use the command:  python run_task1.py
 
-Architecture (two decoupled gates):
+The script writes the directories figures/, results/ and models/. It also
+writes the file submission/results_task1.csv.
+
+The system has two independent parts:
     text --> [structural spam gate: GMM] --spam--> dummy(-1)
                        |
                      keep
@@ -41,7 +43,8 @@ import re
 SEED = 42
 np.random.seed(SEED)
 DUMMY = -1
-_RE_EXCERPT = re.compile(r"\s+")     # flatten newlines so audit excerpts stay one line
+_RE_EXCERPT = re.compile(r"\s+")     # remove the new lines. Thus each part of a
+                                     # document in the audit stays on one line.
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
@@ -65,16 +68,18 @@ def main():
     tr, va, te = load()
     print(f"[load] train={len(tr)} val={len(va)} test={len(te)}")
 
-    # ----- evaluation gold-standard for spam (no labels provided) ----------- #
-    # High-precision RFC-822 header rule: ~perfect for Enron emails, never fires
-    # on one-sentence reviews. Used only to *evaluate* the gate, not to build it.
+    # ----- the reference labels for spam. The data has no such labels. ------ #
+    # This rule finds a header of the RFC-822 type. It has a very high
+    # precision. It finds almost all the Enron emails. It never fires on a
+    # review of one sentence. The code uses the rule only to evaluate the gate.
+    # The code does not use the rule to make the gate.
     tr_email = np.array([high_precision_email_flag(t) for t in tr.text])
     va_email = np.array([high_precision_email_flag(t) for t in va.text])
     print(f"[gold] train emails(rule)={tr_email.sum()} ({tr_email.mean():.1%})  "
           f"val emails(rule)={va_email.sum()} ({va_email.mean():.1%})")
     log["rule_email_frac_train"] = float(tr_email.mean())
 
-    # ----- 1. fit the unsupervised structural spam gate --------------------- #
+    # ----- 1. fit the unsupervised structural spam gate. -------------------- #
     t0 = time.perf_counter()
     gate = SpamGate(random_state=SEED).fit(tr.text)
     gate_fit_s = time.perf_counter() - t0
@@ -82,22 +87,27 @@ def main():
 
     va_spam_p = gate.spam_proba(va.text)
 
-    # Choose the spam threshold by sweeping the precision-recall trade-off of the
-    # GMM posterior against the rule-gold on validation, then pick the highest-F1
-    # point (the principled, brief-mandated threshold sweep -- in structural space).
+    # Select the spam threshold. The code moves the threshold along the
+    # precision-recall curve of the GMM posterior. It compares the posterior
+    # with the reference labels of the rule on the validation set. Then it
+    # selects the point with the highest F1. The brief asks for this sweep, and
+    # this code does the sweep in the structural space.
     prec, rec, thr = precision_recall_curve(va_email.astype(int), va_spam_p)
     f1s = 2 * prec * rec / (prec + rec + 1e-12)
     best_i = int(np.nanargmax(f1s[:-1])) if len(thr) else 0
-    # The GMM posterior is near-degenerate (clean separation), so many thresholds
-    # tie at max F1. Choosing the raw argmax lands at ~1.0, an over-tight boundary.
-    # Instead pick, among thresholds within 99% of the best F1, the one closest to
-    # the natural GMM decision boundary 0.5 -- a robust operating point.
-    # The posterior turned out near-binary (the genres are structurally
-    # separable to ~3 decimal places), so every swept threshold clusters at the
-    # extremes. We therefore operate at the natural GMM boundary 0.5, which is
-    # robust to a borderline unseen email (posterior 0.6 would still be caught),
-    # whereas the swept argmax (~1.0) would miss it. The sweep is reported only
-    # to evidence the separation.
+    # The GMM separates the two types of document almost completely. Thus many
+    # thresholds give the same maximum F1. The raw argmax gives a threshold of
+    # approximately 1.0, which is too high. The code thus looks at the
+    # thresholds with an F1 of more than 99% of the maximum F1. Of these
+    # thresholds, it selects the threshold nearest to 0.5, which is the natural
+    # decision boundary of the GMM.
+    #
+    # The posterior has almost only the values 0 and 1, because the structures
+    # of the two types of document are different to approximately 3 decimal
+    # places. Thus each threshold of the sweep is near 0 or near 1. The code
+    # therefore uses the natural boundary of 0.5. This threshold also finds an
+    # unseen email with a posterior of 0.6, but a threshold of 1.0 does not
+    # find it. The report gives the sweep only as evidence of the separation.
     if len(thr):
         good = np.where(f1s[:-1] >= 0.99 * np.nanmax(f1s[:-1]))[0]
         best_i = int(good[np.argmin(np.abs(thr[good] - 0.5))])
@@ -109,7 +119,7 @@ def main():
                         "recall": float(rec[best_i]), "f1": float(f1s[best_i]),
                         "fit_seconds": gate_fit_s}
 
-    # PR curve figure for the spam gate.
+    # Draw the precision-recall curve of the spam gate.
     plt.figure(figsize=(5, 4))
     plt.plot(rec, prec, lw=2)
     plt.scatter([rec[best_i]], [prec[best_i]], c="crimson", zorder=5,
@@ -119,7 +129,8 @@ def main():
     plt.legend(); plt.grid(alpha=.3); plt.tight_layout()
     plt.savefig(os.path.join(FIG, "spam_gate_pr_curve.png"), dpi=130); plt.close()
 
-    # Posterior histogram split by gold -- shows the bimodal separation.
+    # Draw a histogram of the posterior for each reference group. The figure
+    # shows the two separate modes.
     plt.figure(figsize=(5.5, 4))
     plt.hist(va_spam_p[~va_email], bins=40, alpha=.6, label="reviews (gold)", color="steelblue")
     plt.hist(va_spam_p[va_email], bins=40, alpha=.6, label="emails (gold)", color="indianred")
@@ -130,7 +141,7 @@ def main():
 
     va_spam_pred = gate.predict(va.text)
 
-    # ----- 2. build a CLEANED training set (drop predicted spam) ------------ #
+    # ----- 2. make a CLEAN training set. Remove each predicted spam doc. ---- #
     tr_spam_pred = gate.predict(tr.text)
     keep = ~tr_spam_pred
     Xtr = tr.text[keep].tolist()
@@ -139,32 +150,36 @@ def main():
           f"({(~keep).mean():.1%} dropped as spam)")
     log["train_kept"] = int(keep.sum())
 
-    # ----- 3. train + compare sentiment models on cleaned reviews ----------- #
-    # Evaluate sentiment only on validation docs that are genuine reviews (gold).
+    # ----- 3. train and compare the sentiment models on the clean data. ----- #
+    # Evaluate the sentiment only on the validation documents that the
+    # reference rule identifies as true reviews.
     va_real_mask = ~va_email
     Xva_real = va.text[va_real_mask].tolist()
     yva_real = va.label.values[va_real_mask]
 
     rows = []
-    # (a) word-list floor
+    # (a) the word-list model, which is the minimum reference
     t0 = time.perf_counter(); wl = WordListClassifier(K=400).fit(Xtr, ytr); wl_s = time.perf_counter() - t0
     wl_pred = wl.predict(Xva_real)
     rows.append(("wordlist", (wl_pred == yva_real).mean(), f1_score(yva_real, wl_pred), wl_s))
 
-    # (b) Multinomial NB on word+char union (original's best family)
+    # (b) the Multinomial Naive Bayes model on the word and character features.
+    # This model is the best model of the initial approach.
     t0 = time.perf_counter(); nb = build_nb(alpha=0.3).fit(Xtr, ytr); nb_s = time.perf_counter() - t0
     nb_pred = nb.predict(Xva_real)
     rows.append(("mnb_wordchar", (nb_pred == yva_real).mean(), f1_score(yva_real, nb_pred), nb_s))
 
-    # (c) sparse headline: calibrated Linear SVM on word+char union
+    # (c) the primary sparse model: a calibrated Linear SVM on the word and
+    # character features
     t0 = time.perf_counter(); svm = build_svm(C=1.0).fit(Xtr, ytr); svm_s = time.perf_counter() - t0
     svm_pred = svm.predict(Xva_real)
     rows.append(("svm_wordchar", (svm_pred == yva_real).mean(), f1_score(yva_real, svm_pred), svm_s))
 
-    # (d) second method: BiLSTM over pretrained GloVe embeddings.
-    # Its early stopping runs against a 10% slice held out of TRAINING, never
-    # the validation set -- otherwise it would be selected on the same data the
-    # comparison is scored on and the row would not be comparable to the others.
+    # (d) the second method: a BiLSTM with pretrained GloVe embeddings.
+    # The early stop uses 10% of the TRAINING data. It does not use the
+    # validation set. If it used the validation set, the code would select the
+    # model on the same data that gives the score. Then the comparison with the
+    # other models would not be correct.
     t0 = time.perf_counter()
     n_dev = max(1, int(0.10 * len(Xtr)))
     perm = np.random.RandomState(SEED).permutation(len(Xtr))
@@ -183,10 +198,11 @@ def main():
                      "device": lstm.device_, "train_seconds": lstm_s,
                      "vocab_size": len(lstm.vocab_)}
 
-    # (e) soft-vote ensemble of the three probabilistic models. Free to build
-    # (nothing is refitted) and it is where the second method actually pays off:
-    # the BiLSTM is the only member that can see word order, so its errors are
-    # decorrelated from the two bag-of-n-grams members.
+    # (e) the ensemble of the three probabilistic models. It calculates the mean
+    # of their probabilities. The code fits no model again. Thus the ensemble
+    # costs no time. The ensemble shows the value of the second method. The
+    # BiLSTM is the only model that can use the order of the words. Thus its
+    # errors are different from the errors of the two n-gram models.
     ens = SoftVoteEnsemble({"mnb_wordchar": nb, "svm_wordchar": svm, "bilstm_glove": lstm})
     ens_pred = ens.predict(Xva_real)
     rows.append(("ensemble_soft_vote", (ens_pred == yva_real).mean(),
@@ -203,9 +219,11 @@ def main():
     best_model = by_name[best_name]
     log["best_sentiment_model"] = best_name
 
-    # ----- 3b. representation ablation: word vs char vs union --------------- #
-    # My analog to the original's TF-IDF-vs-Word2vec comparison: isolate what the
-    # character n-grams buy us, holding the classifier (Linear SVM) fixed.
+    # ----- 3b. the ablation of the representation --------------------------- #
+    # The ablation compares the word features, the character features and the
+    # two together. It is the equivalent of the comparison of TF-IDF and
+    # Word2vec in the initial approach. It shows the effect of the character
+    # n-grams. The classifier stays the same Linear SVM.
     abl = representation_ablation(Xtr, ytr, Xva_real, yva_real)
     abl.to_csv(os.path.join(RES, "representation_ablation.csv"), index=False)
     print("\n[ablation] SVM accuracy by preprocessing x representation:")
@@ -214,17 +232,19 @@ def main():
     plot_ablation(abl, os.path.join(FIG, "representation_ablation.png"))
     log["representation_ablation"] = abl.to_dict(orient="records")
 
-    # ----- 4. full 3-way evaluation (neg / pos / spam-dummy) ---------------- #
-    # Deploy whichever model won on validation, provided it exposes calibrated
-    # probabilities -- the dummy fallback needs them. The word-list floor does
-    # not, so it falls back to the calibrated SVM.
+    # ----- 4. the full evaluation with 3 classes: neg, pos and spam --------- #
+    # The code uses the model with the best validation score. The model must
+    # give calibrated probabilities, because the dummy label needs them. The
+    # word-list model does not give probabilities. Thus the code then uses the
+    # calibrated SVM.
     prob_model = best_model if hasattr(best_model, "predict_proba") else svm
     deployed = best_name if prob_model is best_model else "svm_wordchar"
     log["deployed_model"] = deployed
     print(f"[deploy] using '{deployed}' for the 3-way system")
     final_pred, conf = predict_with_dummy(prob_model, va.text.tolist(), va_spam_pred,
                                           conf_threshold=0.0, dummy=DUMMY)
-    # gold 3-way: emails -> dummy; else provided 0/1
+    # The reference labels for the 3 classes. An email gets the dummy label.
+    # Each other document keeps its label 0 or 1 from the data.
     gold3 = np.where(va_email, DUMMY, va.label.values)
     labels3 = [0, 1, DUMMY]
     cm = confusion_matrix(gold3, final_pred, labels=labels3)
@@ -236,10 +256,11 @@ def main():
     log["val_3way_accuracy"] = float(overall_acc)
     log["val_3way_confusion"] = cm.tolist()
 
-    # ----- 5. failure-case mining (real reviews the deployed model got wrong)  #
-    # Sorted by confidence so the report quotes the *confidently* wrong ones --
-    # those are the cases whose language is genuinely misleading, rather than
-    # borderline documents sitting on the decision boundary.
+    # ----- 5. find the true reviews with an incorrect prediction. ----------- #
+    # The code puts the errors in the sequence of the confidence. Thus the
+    # report can give the errors with the highest confidence. The language of
+    # these documents is truly difficult. The other documents are only near the
+    # decision boundary.
     dep_pred = predict_proba_labels(prob_model, Xva_real)
     dep_conf = prob_model.predict_proba(Xva_real).max(axis=1)
     wrong = np.where(dep_pred != yva_real)[0]
@@ -251,14 +272,14 @@ def main():
     print(f"[failures] saved {len(fc)} misclassified review examples "
           f"({len(wrong)} wrong of {len(yva_real)})")
 
-    # ----- 5b. independent audit of the spam gate --------------------------- #
+    # ----- 5b. the independent audit of the spam gate ----------------------- #
     audit = spam_gate_audit(va.text.values, va_spam_pred, va_email)
     log["spam_gate_audit"] = audit
     print(f"[audit] sampled {audit['n_sampled']} gated documents; "
           f"{audit['n_email_like']} carry independent email evidence "
           f"(precision {audit['sample_precision']:.3f})")
 
-    # ----- 6. NLTK external evaluation (movie_reviews corpus) --------------- #
+    # ----- 6. the external evaluation on the NLTK movie_reviews corpus ------ #
     nltk_metrics = nltk_external_eval(gate, prob_model, Xva_real)
     log["nltk_external"] = nltk_metrics
     print(f"[nltk] acc={nltk_metrics['accuracy']:.3f}  "
@@ -266,12 +287,14 @@ def main():
           f"mean P(pos)={nltk_metrics['mean_p_pos']:.3f} vs {nltk_metrics['val_mean_p_pos']:.3f} in-domain  "
           f"spam-gate false-fire rate={nltk_metrics['spam_fire_rate']:.3%}")
 
-    # ----- 7. test submission ---------------------------------------------- #
+    # ----- 7. the submission for the test set ------------------------------- #
     te_spam = gate.predict(te.text)
     te_final, _ = predict_with_dummy(prob_model, te.text.tolist(), te_spam,
                                      conf_threshold=0.0, dummy=DUMMY)
-    # Written with the worksheet's save_as_csv verbatim (no header, np.savetxt),
-    # in the original test-set order -- the brief warns twice against reordering.
+    # The code writes the file with the unchanged function save_as_csv from the
+    # worksheet. The file has no header and uses the format of np.savetxt. The
+    # rows keep the order of the test set. The brief gives a warning two times
+    # about a change of the order.
     save_as_csv(np.asarray(te_final), SUB)
     out_path = os.path.join(SUB, "results_task1.csv")
     dist = pd.Series(te_final).value_counts().to_dict()
@@ -279,7 +302,7 @@ def main():
     assert set(dist) == {0, 1, DUMMY}, f"expected three classes incl. dummy, got {sorted(dist)}"
     log["test_label_distribution"] = {int(k): int(v) for k, v in dist.items()}
 
-    # ----- persist artefacts ------------------------------------------------ #
+    # ----- write the models and the results to the disk --------------------- #
     joblib.dump(gate, os.path.join(MOD, "spam_gate.joblib"))
     joblib.dump(svm, os.path.join(MOD, "svm_wordchar.joblib"))
     with open(os.path.join(MOD, "BEST_MODEL.txt"), "w") as f:
@@ -290,13 +313,15 @@ def main():
 
 
 def representation_ablation(Xtr, ytr, Xva, yva):
-    """Preprocessing x representation sweep, with the classifier held fixed.
+    """Test each preprocessor with each representation.
 
-    Every cell is the same Linear SVM (C=1); only the text preprocessor and the
-    TF-IDF analyser change, so a difference between cells is attributable to
-    exactly one design decision. The whole sweep is 12 fits and takes seconds,
-    which is why the report can afford to argue from a table rather than an
-    anecdote.
+    The classifier stays the same.
+
+    Each cell of the table uses the same Linear SVM with C=1. Only the
+    preprocessor and the TF-IDF analyser change. Thus a difference between two
+    cells comes from one design decision only. The full sweep does 12 fits and
+    takes some seconds. Thus the report can give a full table and not one
+    example only.
     """
     from sklearn.pipeline import Pipeline
     from sklearn.svm import LinearSVC
@@ -314,7 +339,10 @@ def representation_ablation(Xtr, ytr, Xva, yva):
 
 
 def plot_ablation(abl, path):
-    """Grouped bars: one group per preprocessing variant, one bar per representation."""
+    """Plot a group of bars for each preprocessor.
+
+    Each group contains one bar for each representation.
+    """
     reps = list(dict.fromkeys(abl["representation"]))
     pres = list(dict.fromkeys(abl["preprocessing"]))
     width = 0.8 / len(reps)
@@ -350,15 +378,18 @@ def plot_confusion(cm, labels, names, title, path):
 
 
 def predict_proba_labels(model, texts):
-    """Argmax of the calibrated probabilities -- the labels the system deploys."""
+    """Give the class with the highest calibrated probability.
+
+    The system uses these labels.
+    """
     return model.predict_proba(list(texts)).argmax(axis=1)
 
 
-# Business/email vocabulary. Deliberately chosen to be CONTENT words: every
-# feature the gate uses is a surface statistic (lengths, character ratios,
-# header and URL regexes) and none of them look at the lexicon, so agreement
-# here is genuine independent evidence rather than the near-circular agreement
-# between the gate and the header rule.
+# The vocabulary of a business email. Each word is a CONTENT word. The gate
+# uses only statistics of the surface of the text: the lengths, the ratios of
+# the characters, and a regex for a header or a URL. The gate does not look at
+# the vocabulary. Thus this list gives independent evidence. The header rule
+# does not give independent evidence, because it is also structural.
 _EMAIL_VOCAB = {
     "enron", "hou", "ect", "attached", "forwarded", "regards", "thanks",
     "meeting", "invoice", "contract", "agreement", "schedule", "nomination",
@@ -368,16 +399,19 @@ _EMAIL_VOCAB = {
 
 
 def spam_gate_audit(texts, spam_pred, email_gold, n_sample: int = 50, seed: int = SEED):
-    """Audit a random sample of gated documents against independent evidence.
+    """Examine a random sample of the spam documents with independent evidence.
 
-    The gate's headline P/R/F1 is measured against the RFC-822 header rule,
-    which is itself structural -- so a perfect score there is close to circular
-    and the report says so. This function samples ``n_sample`` documents the
-    gate flagged as spam and checks them against evidence the gate cannot see:
-    the presence of business/email *vocabulary*. It writes the sample to
-    results/spam_gate_audit.csv with an excerpt of each document, so the claim
-    is inspectable by hand rather than taken on trust -- that CSV is what was
-    read through, and the number below is what reading it produced.
+    The primary precision, recall and F1 of the gate use the rule for the
+    RFC-822 header. That rule is also structural. Thus a perfect score is
+    almost circular evidence, and the report says this.
+
+    This function takes n_sample documents that the gate identified as spam. It
+    then examines them with evidence that the gate cannot see: the vocabulary
+    of a business email.
+
+    The function writes the sample to results/spam_gate_audit.csv. The file
+    contains a part of each document. Thus a person can read the file and
+    examine each decision. The value below comes from this examination.
     """
     idx = np.where(spam_pred)[0]
     rs = np.random.RandomState(seed)
@@ -405,16 +439,22 @@ def spam_gate_audit(texts, spam_pred, email_gold, n_sample: int = 50, seed: int 
 
 
 def nltk_external_eval(gate: SpamGate, sent_model, val_texts):
-    """Run the deployed system on NLTK movie_reviews (an out-of-domain corpus).
+    """Apply the system to the NLTK corpus movie_reviews.
 
-    We report *why* generalisation drops, not just that it does. The training
-    data is single-sentence review snippets; ``movie_reviews`` documents are
-    full-length critiques averaging hundreds of words. Under a bag-of-features
-    model, a long document accumulates far more weighted terms, and since the
-    training data's discriminative vocabulary skews negative, the score drifts
-    negative with length. Per-class recall and the mean P(pos) against the
-    in-domain mean are the evidence for that claim; the recall gap is the bias
-    the previous feedback flagged, now explained rather than merely reported.
+    This corpus is not from the domain of the training data.
+
+    The report gives the reason for the decrease of the accuracy. The training
+    data contains reviews of one sentence. Each document in movie_reviews is a
+    full review with some hundred words. A bag-of-features model adds a weight
+    for each term. Thus a long document collects many more weights. The
+    vocabulary of the training data has more negative words. Thus the score
+    moves to the negative class when the document is longer.
+
+    The recall of each class and the mean P(pos) give the evidence for this
+    statement. The report compares the mean P(pos) with the mean in the domain
+    of the training data. The difference between the two recall values is the
+    bias in the previous feedback. This analysis gives the reason for that
+    bias.
     """
     from nltk.corpus import movie_reviews
     texts, ys = [], []
@@ -423,7 +463,7 @@ def nltk_external_eval(gate: SpamGate, sent_model, val_texts):
         for fid in movie_reviews.fileids(cat):
             texts.append(movie_reviews.raw(fid)); ys.append(y)
     ys = np.array(ys)
-    spam_mask = gate.predict(texts)            # should fire ~never
+    spam_mask = gate.predict(texts)            # the gate must almost never fire
     proba = sent_model.predict_proba(texts)
     pred, _ = predict_with_dummy(sent_model, texts, spam_mask, dummy=DUMMY)
     real = pred != DUMMY
@@ -434,7 +474,8 @@ def nltk_external_eval(gate: SpamGate, sent_model, val_texts):
                    "NLTK movie_reviews (external) confusion",
                    os.path.join(FIG, "nltk_external_confusion.png"))
 
-    # Evidence for the domain-shift explanation: the score distribution itself.
+    # The distribution of the scores gives the evidence for the change of the
+    # domain.
     val_p_pos = sent_model.predict_proba(list(val_texts))[:, 1]
     lengths = np.array([len(t.split()) for t in texts])
     plot_score_shift(proba[:, 1], val_p_pos, lengths, ys,
@@ -452,7 +493,10 @@ def nltk_external_eval(gate: SpamGate, sent_model, val_texts):
 
 
 def plot_score_shift(p_pos_ext, p_pos_val, lengths, ys, path):
-    """Two panels evidencing the domain shift behind the negative-class bias."""
+    """Plot two panels that show the change of the domain.
+
+    This change causes the bias to the negative class.
+    """
     fig, axes = plt.subplots(1, 2, figsize=(9.0, 3.8))
     axes[0].hist(p_pos_val, bins=40, alpha=.6, density=True, label="in-domain validation",
                  color="steelblue")

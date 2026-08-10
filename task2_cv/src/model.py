@@ -1,11 +1,16 @@
-"""Heatmap-regression CNN for face alignment.
+"""Heatmap regression CNN for face alignment.
 
-Requires PyTorch (`pip install torch`). This is the deep counterpart to the
-NumPy logic in heatmap.py. It is NOT executed in the reference run here because
-the assignment image data is not bundled; supply the data via dataset.py and
-call run_task2.py.
+Install PyTorch before you use this module. Use the command
+`pip install torch`.
 
-Architecture (a compact encoder-decoder / "hourglass-lite", W11_L21 lineage):
+This module is the deep equivalent of the NumPy code in heatmap.py.
+
+The reference run does not execute this module, because the image data of the
+assignment is not in the archive. Give the data to dataset.py, then run
+run_task2.py.
+
+The architecture is a compact encoder-decoder. It is a small hourglass network
+of the type in W11_L21:
 
     input 1x64x64
       -> [Conv3-32, BN, ReLU] x2, MaxPool          -> 32x32x32
@@ -14,11 +19,14 @@ Architecture (a compact encoder-decoder / "hourglass-lite", W11_L21 lineage):
       -> Upsample, [Conv3-16, BN, ReLU]            -> 16x64x64
       -> Conv1 -> K heatmaps (Kx64x64)
 
-Output heatmaps are decoded with soft-argmax (differentiable) so the loss can
-combine a pixel-wise heatmap MSE (against Gaussian targets) with a coordinate
-loss on the decoded points -- a standard and robust recipe. The lecture
-sanctions MSE / squared-Euclidean as the loss; we keep MSE primary and note
-Huber/L1 as the lecture-acknowledged "more robust" alternative.
+The soft-argmax decodes the output heatmaps. This decode is differentiable.
+Thus the loss can contain two terms. The first term is the pixel-wise MSE
+between the heatmaps and the Gaussian targets. The second term is a coordinate
+loss on the decoded landmarks. This combination is usual and robust.
+
+The lecture permits the MSE or the squared Euclidean distance as the loss.
+This module uses the MSE. The lecture gives the Huber loss and the L1 loss as
+more robust alternatives.
 """
 from __future__ import annotations
 
@@ -59,11 +67,16 @@ if _HAS_TORCH:
             return self.head(x)                     # (B,K,64,64)
 
     def gaussian_heatmaps(pts, hw, sigma: float = 1.5):
-        """Batched Gaussian targets: (B,K,2) coords -> (B,K,H,W) maps peaking at 1.
+        """Make Gaussian targets for a batch.
 
-        The torch twin of ``heatmap.make_heatmaps``, built on-device so targets
-        cost nothing per epoch instead of materialising ~1 GB of float32 up
-        front. ``tests_sanity.py`` asserts the two agree.
+        The function changes (B,K,2) coordinates into (B,K,H,W) heatmaps. Each
+        heatmap has a peak value of 1.
+
+        This function is the PyTorch equivalent of heatmap.make_heatmaps. It
+        makes the targets on the device. Thus each epoch does not use memory
+        for the targets. The alternative is a store of approximately 1 GB of
+        float32 values. The file tests_sanity.py makes sure that the two
+        functions agree.
         """
         H, W = hw
         ys = torch.arange(H, device=pts.device, dtype=pts.dtype).view(1, 1, H, 1)
@@ -73,7 +86,11 @@ if _HAS_TORCH:
         return torch.exp(-((xs - px) ** 2 + (ys - py) ** 2) / (2 * sigma ** 2))
 
     def soft_argmax2d(heatmaps, beta: float = 10.0):
-        """Differentiable coordinate decode. Returns (B,K,2) in heatmap pixels."""
+        """Decode the heatmaps to coordinates.
+
+        This decode is differentiable. The function returns a (B,K,2) tensor in
+        heatmap pixels.
+        """
         B, K, H, W = heatmaps.shape
         p = F.softmax(heatmaps.view(B, K, -1) * beta, dim=-1).view(B, K, H, W)
         xs = torch.arange(W, device=heatmaps.device, dtype=heatmaps.dtype)
@@ -83,20 +100,26 @@ if _HAS_TORCH:
         return torch.stack([ex, ey], dim=-1)
 
     def combined_loss(pred_hm, target_hm, pred_xy, target_xy, w_coord: float = 0.1):
-        """Heatmap MSE + weighted coordinate MSE on the soft-argmax output.
+        """Add the heatmap MSE to the weighted coordinate MSE.
 
-        The coordinate term is measured in *grid-relative* units (coords divided
-        by the heatmap width/height) rather than pixels. In pixels it would start
-        at ~10^3 against a heatmap MSE of ~10^-2, so no sane ``w_coord`` could
-        keep the heatmap term relevant; normalised, both terms are O(10^-2) at
-        initialisation and ``w_coord`` does what it says.
+        The coordinate MSE uses the output of the soft-argmax.
+
+        The function measures the coordinate term in grid-relative units. It
+        divides each coordinate by the width or the height of the heatmap. The
+        two possible scales are different:
+
+          * In pixels the coordinate term starts at approximately 10^3. The
+            heatmap term starts at approximately 10^-2. No value of w_coord
+            keeps the heatmap term important.
+          * In grid-relative units both terms start at approximately 10^-2.
+            Then w_coord has the correct effect.
         """
         H, W = pred_hm.shape[-2:]
         s = pred_hm.new_tensor([float(W), float(H)])
         return (F.mse_loss(pred_hm, target_hm)
                 + w_coord * F.mse_loss(pred_xy / s, target_xy / s))
 
-else:  # pragma: no cover - informative stub when torch is absent
+else:  # pragma: no cover - these stubs give an error message if torch is absent
     HeatmapNet = None
 
     def gaussian_heatmaps(*a, **k):

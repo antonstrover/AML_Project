@@ -1,22 +1,28 @@
-"""Task 2 orchestrator: 5-point face-landmark alignment.
+"""The full sequence of Task 2: the alignment of 5 face landmarks.
 
-WHAT THIS RUN PRODUCES
-----------------------
-    figures/   CED curves (normalised and raw-pixel), per-landmark boxplots,
-               best/failure landmark grids, error-vs-pose trend, robustness
-               sweeps, and a visual check of the test predictions
-    results/   task2_metrics.json (all metrics, timings and the device used)
-    submission/results_task2.csv  (554 rows, original 256x256 resolution)
+THE OUTPUT OF THIS SCRIPT
+-------------------------
+    figures/   The CED curves, in normalised units and in raw pixels. A
+               boxplot for each landmark. A grid of the best results and a
+               grid of the failures. The trend of the error against the pose.
+               The robustness sweeps. A visual check of the test predictions.
+    results/   task2_metrics.json, which contains each metric, each time and
+               the device.
+    submission/results_task2.csv, which has 554 rows at the original
+               resolution of 256x256.
 
-RUNNING THIS
-------------
+TO START THE SCRIPT
+-------------------
     python run_task2.py
 
-It needs the assignment's image+landmark arrays, which are not redistributed
-here; point DATA_TRAIN / DATA_VAL / DATA_TEST below at your .npz files (or set
-the matching env vars). If they are absent the script prints exactly what to
-provide and exits cleanly. The CNN path needs PyTorch; the classical
-shape-model path runs on NumPy/sklearn/OpenCV alone.
+The script needs the image array and the landmark array of the assignment.
+This archive does not contain them. Put the paths of your .npz files in
+DATA_TRAIN, DATA_VAL and DATA_TEST below, or set the applicable environment
+variables. If a file does not exist, the script tells you which file to supply
+and then stops correctly.
+
+Install PyTorch before you use the CNN. The classical shape model needs only
+NumPy, scikit-learn and OpenCV.
 """
 from __future__ import annotations
 
@@ -36,10 +42,10 @@ import evaluate as E
 import robustness as R
 
 # --------------------------------------------------------------------------
-# DATA INTEGRATION POINT -- edit these lines (or set the env vars).
-# Expected npz contents (see src/dataset.py):
-#     train/val: key 'images' (N,256,256,3) + 'points' (N,5,2)
-#     test     : key 'images' only
+# THE CONNECTION TO THE DATA. Change these lines, or set the environment
+# variables. The file src/dataset.py gives more data about the npz files:
+#     train and val: the key 'images' (N,256,256,3) and 'points' (N,5,2)
+#     test         : the key 'images' only
 # --------------------------------------------------------------------------
 DATA_TRAIN = os.environ.get("AML_T2_TRAIN", os.path.join(HERE, "data", "train.npz"))
 DATA_VAL = os.environ.get("AML_T2_VAL", os.path.join(HERE, "data", "val.npz"))
@@ -56,28 +62,36 @@ RNG = np.random.default_rng(SEED)
 CFG = D.PreprocConfig(out_size=64, grayscale=True, equalise=False, to_float=True)
 AUG = A.AugmentConfig()
 
-# Hyperparameters, each justified in the report:
-#   sigma      Gaussian target width on the 64x64 map. 1.5px keeps the blob ~7px
-#              wide: broad enough to give gradient everywhere near the landmark,
-#              tight enough that the soft-argmax expectation is not dragged by
-#              the tail of a neighbouring landmark.
-#   targets    Gaussians peaking at 1.0, NOT normalised to sum to one. A
-#              sum-to-one target peaks at ~0.07 and drops the heatmap MSE to
-#              ~1e-5, six orders below the coordinate term, which turns the
-#              model back into the direct coordinate regressor this approach
-#              exists to replace. See model.combined_loss.
-#   lr/opt     Adam 1e-3, cosine-annealed. The heatmap MSE is dominated by
-#              background pixels and so produces small gradients, which Adam's
-#              per-parameter scaling handles without hand-tuning; cosine removes
-#              the final-epochs plateau without another knob to justify.
-#   w_coord    0.1 on the coordinate term, measured in grid-relative units. The
-#              heatmap MSE is the primary loss (it supervises every pixel); the
-#              coordinate term only aligns the decode actually used at test
-#              time, so it is weighted down to avoid dominating early training.
-#   batch      32 -- largest that keeps BatchNorm statistics stable at this
-#              dataset size while still fitting comfortably in MPS memory.
-#   aug factor 4x offline expansion, on top of which the model sees the same
-#              image under different jitter each epoch.
+# The hyperparameters. The report gives the reason for each one:
+#   sigma      The width of the Gaussian target on the 64x64 heatmap. A value
+#              of 1.5 pixels makes the blob approximately 7 pixels wide. The
+#              blob is thus sufficiently wide to give a gradient near the
+#              landmark. It is also sufficiently narrow: the tail of the
+#              adjacent landmark does not move the result of the soft-argmax.
+#   targets    Each Gaussian target has a peak value of 1.0. The code does NOT
+#              normalise the sum to one. A sum-to-one target has a peak value
+#              of approximately 0.07 and decreases the heatmap MSE to
+#              approximately 1e-5. This value is smaller than the coordinate
+#              term by six orders of magnitude. Then the model becomes the
+#              direct coordinate regressor that this approach must replace.
+#              The function model.combined_loss gives more data.
+#   lr/opt     Adam with a learning rate of 1e-3 and a cosine schedule. The
+#              background pixels control the heatmap MSE, and thus the
+#              gradients are small. Adam scales each parameter and does not
+#              need a manual adjustment. The cosine schedule removes the
+#              constant loss in the last epochs and adds no other parameter.
+#   w_coord    The weight of the coordinate term is 0.1 in grid-relative
+#              units. The heatmap MSE is the primary loss, because it
+#              supervises each pixel. The coordinate term only corrects the
+#              decode that the code uses at test time. Thus the weight is
+#              small and the coordinate term does not control the early
+#              training.
+#   batch      32. This is the largest batch that keeps the statistics of the
+#              BatchNorm layers stable for this quantity of data. It is also
+#              sufficiently small for the memory of the MPS device.
+#   aug factor The code makes 4 copies of the training set before the
+#              training. The model also gets a different random change of each
+#              image in each epoch.
 EPOCHS = 150
 PATIENCE = 25
 BATCH = 32
@@ -85,10 +99,11 @@ LR = 1e-3
 SIGMA = 1.5
 AUG_FACTOR = 4
 
-# Operating thresholds for the graded accuracy rule ("% of images with error
-# below a certain threshold"), in pixels at the original 256x256 resolution.
+# The thresholds of the accuracy rule of the marker. The rule gives the
+# percentage of the images with an error less than a threshold. The unit is
+# pixels at the original resolution of 256x256.
 THRESH_PX = (3.0, 5.0, 8.0, 12.0)
-SELECT_PX = 5.0                       # the threshold the deployed model is chosen on
+SELECT_PX = 5.0                       # the threshold that selects the model
 
 
 def _missing_data_message():
@@ -105,7 +120,11 @@ def _missing_data_message():
 
 
 def _device():
-    """Apple M4 -> MPS; otherwise CUDA if present, else CPU."""
+    """Select the device for the training.
+
+    The function selects MPS on an Apple M4. If MPS is not available, it
+    selects CUDA. If CUDA is not available, it selects the CPU.
+    """
     import torch
     if torch.backends.mps.is_available():
         return "mps"
@@ -113,7 +132,10 @@ def _device():
 
 
 def _preprocess_set(imgs, pts):
-    """Vectorised preprocess over a stack; returns (G, P, scales)."""
+    """Preprocess each image of a set.
+
+    The function returns (G, P, scales).
+    """
     G, P, S = [], [], []
     for i in range(len(imgs)):
         p = None if pts is None else pts[i]
@@ -127,13 +149,16 @@ def _preprocess_set(imgs, pts):
 
 
 def _to_original(pts_resized, scales):
-    """Map a whole stack of (N,5,2) predictions back to 256x256 pixel space."""
+    """Change an (N,5,2) array of predictions back to the 256x256 space."""
     return np.stack([D.to_original_resolution(pts_resized[i], scales[i])
                      for i in range(len(pts_resized))])
 
 
 def _build_augmented(G, P, factor=AUG_FACTOR):
-    """Offline-expand the training set; the CNN also re-jitters on the fly."""
+    """Make more training data before the training starts.
+
+    The CNN also applies a different random change in each epoch.
+    """
     augG, augP = [G], [P]
     for _ in range(factor - 1):
         gg, pp = [], []
@@ -145,10 +170,14 @@ def _build_augmented(G, P, factor=AUG_FACTOR):
 
 
 # --------------------------------------------------------------------------- #
-# Models                                                                       #
+# The models                                                                    #
 # --------------------------------------------------------------------------- #
 def run_shape_model(Gtr, Ptr, Gva):
-    """Classical comparator: PCA shape model + HOG->ridge, plus the mean floor."""
+    """Fit and apply the classical models.
+
+    The first model is the PCA shape model with a ridge regression from the
+    HOG. The second model is the mean face, which is the minimum reference.
+    """
     print("\n[shape-model] fitting PCA shape model + HOG ridge ...")
     flat_tr = Ptr.reshape(len(Ptr), -1)
 
@@ -171,7 +200,11 @@ def run_shape_model(Gtr, Ptr, Gva):
 
 
 def _cnn_predict(net, imgs, dev, tta=True):
-    """Predict (N,5,2) in 64x64 space, optionally averaging a flipped pass."""
+    """Predict an (N,5,2) array in the 64x64 space.
+
+    Set tta to True to also predict the flipped image. The function then
+    calculates the mean of the two predictions.
+    """
     import torch
     import model as M
     net.eval()
@@ -179,7 +212,9 @@ def _cnn_predict(net, imgs, dev, tta=True):
         x = torch.as_tensor(imgs[:, None], dtype=torch.float32, device=dev)
         p = M.soft_argmax2d(net(x)).cpu().numpy()
         if tta:
-            # Flip, predict, un-mirror x and undo the landmark swap, average.
+            # Flip the image and predict. Then make the mirror image of x
+            # again and change the landmark indices back. Then calculate the
+            # mean of the two predictions.
             p2 = M.soft_argmax2d(net(torch.flip(x, dims=[-1]))).cpu().numpy()
             p2[..., 0] = (imgs.shape[-1] - 1) - p2[..., 0]
             p2 = p2[:, A.FLIP_PERM]
@@ -188,11 +223,14 @@ def _cnn_predict(net, imgs, dev, tta=True):
 
 
 def run_cnn(Gtr, Ptr, Gva, Pva, augmented: bool, epochs=EPOCHS, patience=PATIENCE):
-    """Heatmap CNN + soft-argmax, early-stopped on validation AUC-CED.
+    """Train the heatmap CNN and decode its output with the soft-argmax.
 
-    Selection uses AUC-CED rather than the training loss because the loss is
-    dominated by the heatmap MSE, which keeps improving after the decoded
-    coordinates have stopped getting better.
+    The training stops early when the AUC-CED of the validation set stops to
+    increase.
+
+    The code uses the AUC-CED and not the training loss, because the heatmap
+    MSE controls the loss. The heatmap MSE continues to decrease after the
+    accuracy of the decoded coordinates stops to increase.
     """
     try:
         import torch
@@ -227,16 +265,18 @@ def run_cnn(Gtr, Ptr, Gva, Pva, augmented: bool, epochs=EPOCHS, patience=PATIENC
             xb, yxy = xb.to(dev), yxy.to(dev)
             opt.zero_grad()
             phm = net(xb)
-            # Targets are built on-device per batch: cheaper than materialising
-            # ~1 GB of float32 heatmaps for the augmented training set.
+            # The code makes the targets on the device for each batch. The
+            # alternative is a store of approximately 1 GB of float32 heatmaps
+            # for the augmented training set.
             yhm = M.gaussian_heatmaps(yxy, phm.shape[-2:], sigma=SIGMA)
             loss = M.combined_loss(phm, yhm, M.soft_argmax2d(phm), yxy)
             loss.backward(); opt.step()
             tot += loss.item() * len(xb)
         sched.step()
 
-        # Early-stopping signal: validation AUC-CED (no TTA -- it is only a
-        # selection signal, and skipping the extra pass halves the cost).
+        # The AUC-CED of the validation set controls the early stop. The code
+        # does not use the flipped image here, because this value only selects
+        # the epoch. Thus the code needs one half of the time.
         auc = E.auc_ced(E.normalised_errors(_cnn_predict(net, Gva, dev, tta=False), Pva))
         history.append({"epoch": ep, "loss": tot / len(X), "val_auc_ced": auc})
         if auc > best_auc:
@@ -263,14 +303,20 @@ def run_cnn(Gtr, Ptr, Gva, Pva, augmented: bool, epochs=EPOCHS, patience=PATIENC
 
 
 # --------------------------------------------------------------------------- #
-# Analysis                                                                     #
+# The analysis                                                                  #
 # --------------------------------------------------------------------------- #
 def summarise(preds_orig, gt_orig):
-    """Both metrics, per model: raw pixels at 256x256 and inter-ocular normalised."""
+    """Calculate the two metrics for each model.
+
+    The first metric is in raw pixels at the resolution of 256x256. The second
+    metric is the error divided by the inter-ocular distance.
+    """
     out = {}
     for name, p in preds_orig.items():
-        px = E.pixel_errors(p, gt_orig)                  # (N,5) graded quantity
-        ioe = E.normalised_errors(p, gt_orig)            # (N,5) scale-invariant
+        px = E.pixel_errors(p, gt_orig)                  # (N,5) the marker uses
+                                                         # this quantity
+        ioe = E.normalised_errors(p, gt_orig)            # (N,5) does not change
+                                                         # with the scale
         per_image = px.mean(axis=1)
         out[name] = {
             "mean_px": float(px.mean()),
@@ -287,7 +333,11 @@ def summarise(preds_orig, gt_orig):
 
 
 def qualitative(chosen, preds_orig, gt_orig, va_imgs):
-    """Best/worst landmark grids and the error-vs-pose trend for the deployed model."""
+    """Make the qualitative figures of the selected model.
+
+    The function makes a grid of the best results and a grid of the worst
+    results. It also plots the trend of the error against the pose.
+    """
     px = E.pixel_errors(preds_orig[chosen], gt_orig)
     per_image = px.mean(axis=1)
     order = np.argsort(per_image)
@@ -315,7 +365,11 @@ def qualitative(chosen, preds_orig, gt_orig, va_imgs):
 
 
 def robustness(cnns, shape_reg, Gva, Pva):
-    """Aug vs no-aug (and the classical model) under increasing perturbation."""
+    """Compare the models when the change of the images becomes larger.
+
+    The function compares the CNN with augmentation, the CNN without
+    augmentation and the classical model.
+    """
     sweeps = {"noise": [0.0, 0.02, 0.05, 0.10, 0.15, 0.20],
               "rotation": [0.0, 5.0, 10.0, 15.0, 20.0, 30.0]}
     predictors = {name: (lambda imgs, c=c: _cnn_predict(c["net"], imgs, c["device"], tta=False))
@@ -346,13 +400,14 @@ def main():
     te_imgs, _ = D.load_raw(DATA_TEST)
     for p in (tr_pts, va_pts):
         if p is not None and p.ndim == 2 and p.shape[1] == 10:
-            p.shape = (-1, 5, 2)                      # (N,10) -> (N,5,2)
+            p.shape = (-1, 5, 2)                      # change (N,10) to (N,5,2)
     print(f"  train images {tr_imgs.shape}, points {tr_pts.shape}")
     print(f"  val   images {va_imgs.shape}, points {va_pts.shape}")
     print(f"  test  images {te_imgs.shape}")
 
-    # Preprocess (coords scaled with the image). The brief supplies a real
-    # held-out validation set, so use it rather than splitting train.
+    # Preprocess each set. The code scales the coordinates with the image. The
+    # brief supplies a separate validation set. Thus the code uses that set and
+    # does not divide the training set.
     t0 = time.perf_counter()
     Gtr, Ptr, _ = _preprocess_set(tr_imgs, tr_pts)
     Gva, Pva, va_scales = _preprocess_set(va_imgs, va_pts)
@@ -366,7 +421,7 @@ def main():
                       "n_train": int(len(Gtr)), "n_val": int(len(Gva)),
                       "n_test": int(len(Gte))}}
 
-    # ---- 1..4: the four approaches ----------------------------------------
+    # ---- 1 to 4: the four approaches --------------------------------------
     preds, timing, shape_reg = run_shape_model(Gtr, Ptr, Gva)
 
     cnns = {}
@@ -379,7 +434,7 @@ def main():
             timing[name] = t
     log["training"] = timing
 
-    # ---- metrics, in ORIGINAL 256x256 pixel space --------------------------
+    # ---- the metrics, in the ORIGINAL 256x256 pixel space ------------------
     gt_orig = _to_original(Pva, va_scales)
     preds_orig = {k: _to_original(v, va_scales) for k, v in preds.items()}
     log["metrics"] = summarise(preds_orig, gt_orig)
@@ -391,7 +446,7 @@ def main():
             name, m["mean_px"], m["median_px"], m["auc_ced"],
             100 * m["pct_images_below_px"][f"{SELECT_PX:g}"]))
 
-    # ---- figures -----------------------------------------------------------
+    # ---- the figures -------------------------------------------------------
     ioe = {k: E.normalised_errors(v, gt_orig) for k, v in preds_orig.items()}
     pxe = {k: E.pixel_errors(v, gt_orig) for k, v in preds_orig.items()}
 
@@ -408,7 +463,7 @@ def main():
     E.plot_landmark_boxplots(pxe, os.path.join(OUT_FIG, "landmark_boxplots.png"),
                              title="Per-landmark error by approach (validation)")
 
-    # ---- deploy the model that wins on the GRADED rule ---------------------
+    # ---- select the best model with the rule of the MARKER -----------------
     key = f"{SELECT_PX:g}"
     chosen = max(log["metrics"],
                  key=lambda k: (log["metrics"][k]["pct_images_below_px"][key],
@@ -421,11 +476,11 @@ def main():
     print(f"[qualitative] err vs |roll| r={log['qualitative']['corr_err_abs_roll']:+.2f}, "
           f"err vs |yaw proxy| r={log['qualitative']['corr_err_abs_yaw']:+.2f}")
 
-    # ---- robustness: aug vs no-aug under controlled perturbation ----------
+    # ---- the robustness of the CNN with and without the augmentation ------
     if len(cnns) == 2:
         log["robustness"] = robustness(cnns, shape_reg, Gva, Pva)
 
-    # ---- test submission at ORIGINAL resolution ---------------------------
+    # ---- the submission for the test set, at the ORIGINAL resolution ------
     if chosen in cnns:
         pred_te = _cnn_predict(cnns[chosen]["net"], Gte, cnns[chosen]["device"], tta=True)
     elif chosen == "shape_model":
@@ -434,7 +489,8 @@ def main():
         pred_te = np.repeat(Ptr.mean(axis=0)[None], len(Gte), axis=0)
     pred_te_orig = _to_original(pred_te, te_scales)
 
-    # Visual check before shipping: the points must land on eyes/nose/mouth.
+    # Examine the figure before you send the submission. Each landmark must be
+    # on an eye, on the nose or on a corner of the mouth.
     E.plot_landmark_grid(te_imgs, pred_te_orig, None, [0, 1, 2, 3],
                          os.path.join(OUT_FIG, "test_predictions.png"),
                          f"Test-set predictions ({chosen}), original resolution")

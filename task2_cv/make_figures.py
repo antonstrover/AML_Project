@@ -1,11 +1,13 @@
-"""Generate the Task 2 *method* diagrams: the preprocessing and augmentation
-flowcharts and the heatmap-CNN architecture.
+"""Make the diagrams of the method of Task 2.
 
-Nothing here plots results. Every CED curve, boxplot, landmark example and
-robustness sweep is produced by run_task2.py from the real validation set --
-this file used to emit synthetic demo versions of them as placeholders, and
-those are exactly what the previous submission was marked down for. If a plot
-shows numbers, it came from the real data.
+The script draws the flowchart of the preprocessing, the flowchart of the
+augmentation and the architecture of the heatmap CNN.
+
+This script draws no result. The script run_task2.py makes each CED curve,
+each boxplot, each landmark example and each robustness sweep from the real
+validation data. An initial version of this script drew examples of these
+figures from artificial data. The previous submission lost marks because of
+these figures. Thus a figure with numbers must come from the real data.
 """
 import os, sys
 import matplotlib
@@ -33,20 +35,20 @@ def flow(boxes, title, path, color="#cfe8ff"):
     fig.tight_layout(); fig.savefig(path, dpi=140); plt.close(fig)
 
 
-# 1. preprocessing flowchart
+# 1. the flowchart of the preprocessing
 flow(["RGB image (orig HxW)", "grayscale (3->1 ch)",
       "resize 64x64  +  scale landmarks", "intensity -> [0,1] float",
       "(opt) CLAHE equalise [ablated]"],
      "Pre-processing (W06_L12)", os.path.join(FIG, "preprocess_flowchart.png"))
 
-# 2. augmentation flowchart
+# 2. the flowchart of the augmentation
 flow(["(image, 5 landmarks)", "h-flip  +  SWAP indices 0<->1, 3<->4",
       "rotate / scale / translate (both)", "brightness / contrast / gamma",
       "Gaussian noise", "(augmented image, landmarks)"],
      "Augmentation (W09_L18)", os.path.join(FIG, "augment_flowchart.png"),
      color="#ffe2c2")
 
-# 3. heatmap CNN architecture
+# 3. the architecture of the heatmap CNN
 fig, ax = plt.subplots(figsize=(8.5, 3.0)); ax.axis("off")
 ax.set_xlim(0, 11); ax.set_ylim(0, 3)
 stages = [("input\n1x64x64", "#eeeeee"), ("conv32\n64x64", "#cfe8ff"),

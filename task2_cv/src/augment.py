@@ -1,19 +1,20 @@
-"""Geometric + photometric augmentation for face alignment.
+"""Geometric and photometric augmentation for face alignment.
 
-The single most important correctness detail in face-alignment augmentation
-(W09_L18 calls it out explicitly) is that a horizontal flip must **also swap
-the landmark indices**: the left eye becomes the right eye. For the 5-point
-scheme used here:
+The most important correctness point is the horizontal flip. W09_L18 gives a
+warning about it. A horizontal flip must also change the indices of the
+landmarks. The left eye becomes the right eye. This module uses a scheme with
+5 landmarks:
 
     0 = left eye, 1 = right eye, 2 = nose, 3 = left mouth, 4 = right mouth
 
-a horizontal flip maps 0<->1 and 3<->4 and leaves 2 in place. Getting this
-wrong silently teaches the network a mirror-image identity and wrecks the eye
-landmarks -- a classic and hard-to-spot bug. The unit test in
-``tests_sanity.py`` checks exactly this round-trip.
+A horizontal flip changes 0 to 1 and 1 to 0. It changes 3 to 4 and 4 to 3. It
+does not move 2. If the code does not do this, the network learns a mirror
+image of the face. Then the eye landmarks become incorrect. This is a usual
+error, and it is difficult to find. The test in tests_sanity.py makes sure
+that this operation is correct.
 
-Everything is implemented so that image and landmarks are transformed by the
-*same* parameters in one call, returning the transformed pair.
+Each function changes the image and the landmarks with the same parameters in
+one call. Each function returns the changed image and the changed landmarks.
 """
 from __future__ import annotations
 
@@ -24,25 +25,31 @@ import numpy as np
 
 try:
     import cv2
-except Exception:  # cv2 is available in this env; guard anyway
+except Exception:  # cv2 is in this environment. This guard is a precaution.
     cv2 = None
 
-# Index permutation applied on a horizontal flip (5-point scheme).
+# The new sequence of the landmark indices after a horizontal flip.
 FLIP_PERM = np.array([1, 0, 2, 4, 3])
 
 
 def hflip(img: np.ndarray, pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Horizontal flip with the mandatory landmark index swap."""
+    """Flip the image horizontally and change the landmark indices.
+
+    The change of the indices is necessary.
+    """
     h, w = img.shape[:2]
     out_img = img[:, ::-1].copy()
     out_pts = pts.copy()
-    out_pts[:, 0] = (w - 1) - out_pts[:, 0]   # mirror x
-    out_pts = out_pts[FLIP_PERM]              # swap left/right identities
+    out_pts[:, 0] = (w - 1) - out_pts[:, 0]   # make a mirror image of x
+    out_pts = out_pts[FLIP_PERM]              # change left to right
     return out_img, out_pts
 
 
 def affine(img, pts, angle_deg=0.0, scale=1.0, tx=0.0, ty=0.0) -> Tuple[np.ndarray, np.ndarray]:
-    """Rotate/scale/translate image and landmarks about the image centre."""
+    """Rotate, scale and move the image and the landmarks.
+
+    The centre of the image is the centre of the rotation.
+    """
     h, w = img.shape[:2]
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
     M = cv2.getRotationMatrix2D((cx, cy), angle_deg, scale)
@@ -57,11 +64,15 @@ def affine(img, pts, angle_deg=0.0, scale=1.0, tx=0.0, ty=0.0) -> Tuple[np.ndarr
 
 def photometric(img: np.ndarray, brightness=0.0, contrast=1.0, gamma=1.0,
                 noise_sigma=0.0, rng=None) -> np.ndarray:
-    """Brightness/contrast/gamma/Gaussian-noise on a float image in [0,1]."""
+    """Change the brightness, the contrast, the gamma and the noise.
+
+    The image must be a float image in the range [0,1]. The noise is Gaussian.
+    """
     rng = rng or np.random.default_rng()
     out = img.astype(np.float32)
-    out = (out - 0.5) * contrast + 0.5 + brightness         # contrast then brightness
-    out = np.clip(out, 0, 1) ** gamma                        # gamma
+    out = (out - 0.5) * contrast + 0.5 + brightness         # first the contrast,
+                                                            # then the brightness
+    out = np.clip(out, 0, 1) ** gamma                        # then the gamma
     if noise_sigma > 0:
         out = out + rng.normal(0, noise_sigma, out.shape).astype(np.float32)
     return np.clip(out, 0, 1)
@@ -70,7 +81,7 @@ def photometric(img: np.ndarray, brightness=0.0, contrast=1.0, gamma=1.0,
 @dataclass
 class AugmentConfig:
     p_flip: float = 0.5
-    max_rot: float = 25.0          # degrees
+    max_rot: float = 25.0          # in degrees
     scale_range: Tuple[float, float] = (0.85, 1.15)
     max_translate_frac: float = 0.08
     brightness: float = 0.12
@@ -81,12 +92,20 @@ class AugmentConfig:
 
 def augment_pair(img: np.ndarray, pts: np.ndarray, cfg: AugmentConfig,
                  rng=None) -> Tuple[np.ndarray, np.ndarray]:
-    """Sample one random augmentation (the on-the-fly training transform).
+    """Apply one random augmentation to an image and its landmarks.
 
-    img: HxW float image in [0,1]; pts: (5,2) landmark coords in pixels.
-    Returns the transformed (img, pts). This is the W09_L18 augmentation set:
-    flips (with annotation swap), rotation, scale, translation, brightness/
-    contrast/gamma and Gaussian noise.
+    The training loop calls this function for each image in each epoch.
+
+    The argument img is an HxW float image in the range [0,1]. The argument
+    pts is a (5,2) array of landmark coordinates in pixels. The function
+    returns the changed image and the changed landmarks.
+
+    W09_L18 gives this set of augmentations:
+
+      * a flip, with the change of the landmark indices
+      * a rotation, a scale and a translation
+      * a change of the brightness, the contrast and the gamma
+      * Gaussian noise
     """
     rng = rng or np.random.default_rng()
     h, w = img.shape[:2]

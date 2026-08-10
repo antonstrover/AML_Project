@@ -1,25 +1,26 @@
-"""Unsupervised structural spam gate (Task 1).
+"""An unsupervised spam gate that uses the structure of the text (Task 1).
 
-We have NO ground-truth spam labels, so the two document genres are modelled
-explicitly as a 2-component Gaussian Mixture in standardised structural-feature
-space.
+The data contains NO ground-truth spam labels. Thus this module models the
+two types of document as a Gaussian Mixture with 2 components. The space of
+the model is the space of the standardised structural features.
 
-Why a GMM:
+The GMM has these properties:
 
-  * It is *generative and unsupervised* -- it discovers the two genres
-    (reviews vs emails) from the data's own structure, with no labels and no
-    appeal to the sentiment centroids, so the gate is independent of the
-    sentiment representation.
-  * It yields a calibrated *posterior* P(spam | structure), so the spam/keep
-    decision is a single interpretable probability threshold we can sweep on
-    a precision-recall curve -- the threshold sweep the brief wants, in a
-    structural, probabilistic space.
-  * Clustering / mixture models are squarely standard ML; framing spam as the
-    minority structural cluster is the "originality within scope" move.
+  * The GMM is generative and unsupervised. It finds the two types of
+    document, the review and the email, from the structure of the data. It
+    uses no labels. It does not use the centroids of the sentiment model.
+    Thus the gate is independent of the sentiment features.
+  * The GMM gives a calibrated posterior P(spam | structure). Thus the
+    decision to keep a document or to remove it is a threshold on one
+    probability. A person can understand this threshold. The code moves the
+    threshold along a precision-recall curve. The brief asks for this sweep,
+    and this module does it in a structural and probabilistic space.
+  * A mixture model is a standard machine-learning method. This module uses
+    it in a new way: spam is the smaller structural cluster.
 
-The component that ends up being "spam" is chosen automatically as the one
-whose mean log-length is larger (emails are reliably the longer genre), so we
-never rely on a hard-coded cluster index.
+The code selects the spam component automatically. The spam component is the
+component with the larger mean log-length, because an email is always the
+longer type of document. Thus the code does not use a fixed cluster index.
 """
 from __future__ import annotations
 
@@ -35,15 +36,19 @@ from structure_features import FEATURE_NAMES, extract_matrix
 
 @dataclass
 class SpamGate:
-    """Fit a 2-component GMM on structural features and expose a spam posterior."""
+    """Fit a GMM with 2 components to the structural features.
+
+    The class then gives the posterior probability of spam.
+    """
 
     random_state: int = 42
-    threshold: float = 0.5            # decision threshold on P(spam | x)
+    threshold: float = 0.5            # the decision threshold on P(spam | x)
     scaler: Optional[StandardScaler] = field(default=None, repr=False)
     gmm: Optional[GaussianMixture] = field(default=None, repr=False)
     spam_component_: int = -1
 
-    # log_length is column 0 in FEATURE_NAMES; the spam cluster is the longer one.
+    # The feature log_length is column 0 in FEATURE_NAMES. The spam cluster is
+    # the cluster with the longer documents.
     _LEN_COL = 0
 
     def fit(self, texts) -> "SpamGate":
@@ -56,20 +61,20 @@ class SpamGate:
             n_init=5,
             random_state=self.random_state,
         ).fit(Xs)
-        # Identify which latent component corresponds to spam (longer docs).
+        # Find the component that shows spam. It has the longer documents.
         means_len = self.gmm.means_[:, self._LEN_COL]
         self.spam_component_ = int(np.argmax(means_len))
         return self
 
     def spam_proba(self, texts) -> np.ndarray:
-        """Posterior probability that each document is spam."""
+        """Calculate the posterior probability of spam for each document."""
         if self.gmm is None or self.scaler is None:
             raise RuntimeError("SpamGate must be fit before calling spam_proba.")
         Xs = self.scaler.transform(extract_matrix(texts))
         return self.gmm.predict_proba(Xs)[:, self.spam_component_]
 
     def predict(self, texts) -> np.ndarray:
-        """Boolean spam mask at the current threshold."""
+        """Tell for each document if it is spam at the current threshold."""
         return self.spam_proba(texts) >= self.threshold
 
     def set_threshold(self, t: float) -> "SpamGate":
@@ -77,7 +82,7 @@ class SpamGate:
         return self
 
     def component_report(self) -> str:
-        """Human-readable comparison of the two discovered clusters."""
+        """Make a text comparison of the two clusters for a person to read."""
         if self.gmm is None:
             return "<unfit>"
         means = self.scaler.inverse_transform(self.gmm.means_)

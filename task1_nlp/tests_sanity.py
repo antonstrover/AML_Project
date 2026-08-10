@@ -1,17 +1,22 @@
-"""Sanity checks for Task 1 logic (fast, no training, no data files needed).
+"""The checks of the Task 1 code.
 
-These do not claim sentiment accuracy -- that is what the validation set is for.
-They verify the mechanics where text-pipeline bugs actually hide:
+These checks are fast. They do no training and need no data file.
 
-  1. light cleaning and tokenisation are stable and keep sentiment-bearing
-     punctuation
-  2. sequence encoding pads/truncates to a fixed width and maps OOV to <unk>
-  3. the GloVe loader degrades gracefully when the vectors are absent
-  4. the 3-way routing sends spam to the dummy label and nothing else does
-  5. the worksheet's save_as_csv writes 1434 headerless rows and refuses
-     anything else
+These checks do NOT measure the accuracy of the sentiment model. The
+validation set gives that accuracy. The checks make sure that the mechanisms
+are correct. Almost all the errors in a text program are in these mechanisms:
 
-Run:  python tests_sanity.py
+  1. The light cleaning and the tokeniser always give the same result. They
+     keep each punctuation mark that contains sentiment data.
+  2. The encoder makes each sequence the same length. It adds a pad or removes
+     the last tokens. It changes an unknown word to <unk>.
+  3. The GloVe loader gives a correct result if the file of the vectors does
+     not exist.
+  4. The system with 3 classes gives the dummy label to spam only.
+  5. The function save_as_csv from the worksheet writes 1434 rows and no
+     header. It gives an error for other data.
+
+To start the checks, use the command:  python tests_sanity.py
 """
 import os
 import sys
@@ -35,7 +40,7 @@ def check(name, cond):
     print(f"[{PASS if cond else FAIL}] {name}")
 
 
-# 1. cleaning + tokenisation ------------------------------------------------ #
+# 1. the cleaning and the tokeniser ----------------------------------------- #
 check("light_clean lowercases and collapses whitespace",
       light_clean("  A   GREAT\tfilm\n") == "a great film")
 check("light_clean maps a missing document to the empty string, not 'none'",
@@ -44,7 +49,7 @@ check("tokenise keeps sentiment punctuation",
       tokenise("Awful!! Really?") == ["awful", "!", "!", "really", "?"])
 check("tokenise keeps clitics intact", "wasn't" in tokenise("It wasn't bad"))
 
-# 1b. preprocessing variants used in the ablation --------------------------- #
+# 1b. the preprocessors of the ablation ------------------------------------- #
 check("negation marking scopes over the following words",
       mark_negation("not a good film") == "not not_a not_good not_film")
 check("negation marking stops at punctuation",
@@ -56,7 +61,7 @@ check("negation marking leaves unnegated text alone",
 check("stopword removal keeps the negations it must not delete",
       set(remove_stopwords("this was not a good film").split()) >= {"not", "good"})
 
-# 2. sequence encoding ------------------------------------------------------ #
+# 2. the encoder of the sequences ------------------------------------------- #
 m = GloVeBiLSTM(max_len=6, min_count=1)
 m.vocab_ = m._build_vocab(["good film", "bad film"])
 check("vocab reserves <pad>=0 and <unk>=1",
@@ -68,7 +73,7 @@ check("long sequences are truncated, not wrapped", (enc[1] != 0).all())
 check("out-of-vocabulary tokens map to <unk>", set(enc[1].tolist()) == {1})
 check("empty text encodes to all padding", (enc[2] == 0).all())
 
-# 3. GloVe loader ----------------------------------------------------------- #
+# 3. the GloVe loader ------------------------------------------------------- #
 emb, found = load_glove(m.vocab_, dim=4, path="/definitely/not/a/file.txt")
 check("missing GloVe file returns None so the caller can fall back",
       emb is None and found == 0)
@@ -84,9 +89,9 @@ check("only in-vocabulary words are counted as found", found == 1)
 os.unlink(gpath)
 
 
-# 4. 3-way routing ---------------------------------------------------------- #
+# 4. the system with 3 classes ---------------------------------------------- #
 class _Stub:
-    """Returns a fixed probability pair for every document."""
+    """Give the same pair of probabilities for each document."""
     def __init__(self, p):
         self.p = p
 
@@ -94,7 +99,8 @@ class _Stub:
         return np.tile(self.p, (len(texts), 1))
 
 
-# Always confidently positive, so any dummy label must come from routing.
+# This model always gives the positive class with a high confidence. Thus each
+# dummy label comes from the decision logic only.
 _StubModel = lambda: _Stub([0.1, 0.9])
 
 
@@ -113,7 +119,7 @@ check("confidence threshold routes unsure documents to the dummy too",
       (predict_with_dummy(_StubModel(), ["a"], np.array([False]),
                           conf_threshold=0.95, dummy=-1)[0] == -1).all())
 
-# 5. submission format ------------------------------------------------------ #
+# 5. the format of the submission file --------------------------------------- #
 with tempfile.TemporaryDirectory() as d:
     save_as_csv(np.array([0, 1, -1] * 478), d)
     lines = open(os.path.join(d, "results_task1.csv")).read().splitlines()
@@ -128,7 +134,7 @@ with tempfile.TemporaryDirectory() as d:
         ok = True
     check("save_as_csv rejects the wrong number of labels", ok)
 
-# summary -------------------------------------------------------------------- #
+# the summary ---------------------------------------------------------------- #
 n_pass = sum(s == PASS for _, s in results)
 print(f"\n{n_pass}/{len(results)} checks passed")
 sys.exit(0 if n_pass == len(results) else 1)

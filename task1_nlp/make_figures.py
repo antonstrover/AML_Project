@@ -1,12 +1,15 @@
-"""Generate the Task 1 method diagrams.
+"""Make the diagrams of the method of Task 1.
 
-pipeline_flowchart.png   raw text -> features -> gate -> classifier -> label
-model_architectures.png  the sparse TF-IDF head and the BiLSTM side by side
+The script writes two files:
 
-The drawing helpers are the same ones used for the Task 2 diagrams
-(task2_cv/make_figures.py), so both tasks' figures share a visual language.
+    pipeline_flowchart.png   The sequence: raw text, features, gate,
+                             classifier, label.
+    model_architectures.png  The sparse TF-IDF model and the BiLSTM together.
 
-Run:  python make_figures.py
+The drawing functions are the same functions as in the diagrams of Task 2 in
+task2_cv/make_figures.py. Thus the figures of the two tasks look the same.
+
+To start the script, use the command:  python make_figures.py
 """
 import os
 
@@ -39,7 +42,7 @@ def arrow(ax, xy_from, xy_to, label=None, style="-|>"):
 
 
 # --------------------------------------------------------------------------- #
-# (a) Preprocessing / representation pipeline.                                 #
+# (a) The sequence of the preprocessing and the representation.                #
 # --------------------------------------------------------------------------- #
 fig, ax = plt.subplots(figsize=(9.5, 4.6))
 ax.set_xlim(0, 10); ax.set_ylim(0, 5); ax.axis("off")
@@ -76,7 +79,7 @@ fig.savefig(os.path.join(FIG, "pipeline_flowchart.png"), dpi=140)
 plt.close(fig)
 
 # --------------------------------------------------------------------------- #
-# (b) The two model architectures, side by side.                               #
+# (b) The two model architectures together.                                    #
 # --------------------------------------------------------------------------- #
 fig, axes = plt.subplots(1, 2, figsize=(10.0, 4.4))
 

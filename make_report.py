@@ -1,9 +1,13 @@
-"""Render REPORT.md to REPORT.pdf and check it against the brief's word limit.
+"""Make REPORT.pdf from REPORT.md and count the words.
 
-PDF rendering goes through headless Chrome, which is already on the machine and
-handles the figures, tables and page breaks properly.
+The brief gives a limit for the number of the words. The script compares the
+report with that limit.
 
-Run:  python make_report.py
+The script makes the PDF file with Chrome in the headless mode. Chrome is
+already on this machine. It puts the figures, the tables and the page breaks
+in the correct positions.
+
+To start the script, use the command:  python make_report.py
 """
 from __future__ import annotations
 
@@ -54,7 +58,10 @@ hr { border: 0; border-top: 1px solid #ccc; margin: 12pt 0; }
 
 
 def body_word_count(md_text: str) -> int:
-    """Words before the References heading, with markup and image tags stripped."""
+    """Count the words before the heading References.
+
+    The function first removes the markup and the image tags.
+    """
     body = re.split(r"^##\s+References\b", md_text, flags=re.M)[0]
     body = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", body)        # figures
     body = re.sub(r"\{:[^}]*\}", " ", body)                  # attr_list annotations

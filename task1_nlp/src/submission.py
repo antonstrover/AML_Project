@@ -1,17 +1,21 @@
-"""Task 1 submission writer.
+"""The function that writes the submission file of Task 1.
 
-The brief states that predictions **must** be exported with the function
-supplied in the Colab worksheet, "to avoid losing marks". ``save_as_csv`` below
-is that function, copied verbatim (docstring included) from
-``worksheets/aml_task1_nlp_worksheet.ipynb`` -- no header row, ``np.savetxt``
-formatting, and the 1434-row assertion retained.
+The brief tells you to write the predictions with the function from the Colab
+worksheet. If you use a different function, you lose marks. The function
+save_as_csv below is that function. This module keeps the function and its
+docstring without a change from
+worksheets/aml_task1_nlp_worksheet.ipynb. The function writes no header row.
+It uses the format of np.savetxt. It keeps the assert for the 1434 rows.
 
-Consequences of using it verbatim, which the report states explicitly:
-  * values are written in scientific notation (``0`` -> ``0.000000000000000000e+00``);
-  * the spam dummy label ``-1`` therefore appears as ``-1.000000000000000000e+00``,
-    which satisfies the brief's requirement that spam rows carry a label that is
-    neither 0 nor 1;
-  * row order is the test-set order and is never permuted.
+The report gives these results of the unchanged function:
+
+  * The function writes each value in scientific notation. It writes 0 as
+    0.000000000000000000e+00.
+  * Thus the function writes the dummy label -1 for spam as
+    -1.000000000000000000e+00. The brief tells you to give a spam row a label
+    that is not 0 and not 1. This value obeys that rule.
+  * The rows keep the order of the test set. The code does not change the
+    order.
 """
 from __future__ import annotations
 

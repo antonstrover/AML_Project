@@ -1,24 +1,21 @@
-"""Heatmap targets and soft-argmax decoding.
+"""Heatmap targets and soft-argmax decode.
 
-My approach predicts, for each of the 5 landmarks, a low-resolution
-**heatmap** whose target is a 2-D Gaussian blob centred on the true
-point, and decodes coordinates with **soft-argmax**.
+The model gives one low-resolution heatmap for each of the 5 landmarks. The
+target is a 2-D Gaussian blob at the true landmark. This module decodes the
+heatmaps to coordinates with soft-argmax.
 
-Why this is the more interesting (and more robust) deep approach -- straight
-from W09_L18:
+The lecture W09_L18 gives the reasons for this approach:
 
-  * The lecture notes that "the arg-max is not differentiable, so [we] need to
-    create heatmap images as targets or use soft-argmax." Heatmaps make the
-    spatial structure of the problem explicit.
-  * Errors in heatmap regression are *spatially local*: a confused pixel
-    nudges one landmark slightly, whereas a confused unit in a direct-
-    regression head can throw a coordinate far across the image. This is the
-    mechanism behind heatmap models' empirically better robustness, which I
-    test in robustness.py.
+  * The arg-max is not differentiable. Thus a heatmap target or a soft-argmax
+    is necessary. A heatmap also makes the spatial structure of the problem
+    clear.
+  * An error in a heatmap is local in space. It moves one landmark a small
+    distance. An error in a direct regression head can move a coordinate a
+    large distance across the image. This is why a heatmap model is more
+    robust in tests. The module robustness.py measures this behaviour.
 
-This module is pure NumPy so the target-generation and decoding logic can be
-unit-tested without a GPU. The CNN itself (model.py) consumes/produces the
-same tensors in PyTorch.
+This module uses only NumPy. Thus you can test the target code and the decode
+code without a GPU. The CNN in model.py uses the same tensors in PyTorch.
 """
 from __future__ import annotations
 
@@ -27,19 +24,24 @@ import numpy as np
 
 def make_heatmaps(pts: np.ndarray, out_hw, sigma: float = 1.5,
                   normalise: bool = False) -> np.ndarray:
-    """Return (K, Hh, Wh) Gaussian heatmaps for K landmarks.
+    """Make (K, Hh, Wh) Gaussian heatmaps for K landmarks.
 
-    pts: (K, 2) landmark coords already scaled to the heatmap resolution.
+    The argument pts is a (K, 2) array. Scale these coordinates to the heatmap
+    resolution before you call this function.
 
-    By default the blobs peak at 1.0, which is the standard heatmap-regression
-    target (Tompson 2014, Newell 2016) and the one used for training: a
-    sum-to-one target instead peaks at 1/(2*pi*sigma^2) ~= 0.07, which drives
-    the pixel-wise MSE down to ~1e-5 and leaves the coordinate term of the loss
-    to dominate by six orders of magnitude -- silently turning the model back
-    into the direct coordinate regressor this approach exists to replace.
+    The default blob has a peak value of 1.0. This is the usual heatmap
+    regression target (Tompson 2014, Newell 2016). The training code uses this
+    form.
 
-    ``normalise=True`` returns the sum-to-one form, which is what ``soft_argmax``
-    builds internally when it decodes; both decode to the same coordinates.
+    A sum-to-one target has a peak value of 1/(2*pi*sigma^2), which is
+    approximately 0.07. Then the pixel-wise MSE decreases to approximately
+    1e-5. Then the coordinate term of the loss is larger by six orders of
+    magnitude. Then the model becomes the direct coordinate regressor that this
+    approach must replace.
+
+    Set normalise=True to get the sum-to-one form. The function soft_argmax
+    makes this form internally when it decodes. The two forms decode to the
+    same coordinates.
     """
     Hh, Wh = out_hw
     K = pts.shape[0]
@@ -54,17 +56,20 @@ def make_heatmaps(pts: np.ndarray, out_hw, sigma: float = 1.5,
 
 
 def soft_argmax(hm: np.ndarray, beta: float = 1.0, from_logits: bool = False) -> np.ndarray:
-    """Decode (K, Hh, Wh) heatmaps to (K, 2) coords via spatial expectation.
+    """Decode (K, Hh, Wh) heatmaps to (K, 2) coordinates.
 
-    Two regimes:
-      * ``from_logits=False`` (default): the heatmap is already a non-negative
-        map (e.g. a Gaussian target or a ReLU'd prediction). We renormalise it
-        to a spatial pmf and take the expected (x, y). This is the correct
-        eval-time decode -- applying an extra softmax here would wash a sharp
-        peak out toward the image centre.
-      * ``from_logits=True``: the heatmap holds raw (possibly negative) network
-        logits, so we apply a temperature-``beta`` spatial softmax first. This
-        mirrors the differentiable torch decode in model.py.
+    The function calculates the expected position in space.
+
+    There are two modes:
+      * from_logits=False is the default. The heatmap is already a
+        non-negative map, for example a Gaussian target or a prediction after
+        a ReLU. The function normalises the heatmap to a spatial pmf. Then it
+        calculates the expected (x, y). Use this mode at evaluation time. An
+        additional softmax moves a sharp peak towards the centre of the image.
+      * from_logits=True. The heatmap holds network logits, which can be
+        negative. The function first applies a spatial softmax with the
+        temperature beta. This is equivalent to the differentiable decode in
+        model.py.
     """
     K, Hh, Wh = hm.shape
     if from_logits:
@@ -82,7 +87,11 @@ def soft_argmax(hm: np.ndarray, beta: float = 1.0, from_logits: bool = False) ->
 
 
 def hard_argmax(hm: np.ndarray) -> np.ndarray:
-    """Plain argmax decode (non-differentiable) -- for eval-time comparison."""
+    """Decode the heatmaps with a plain argmax.
+
+    This decode is not differentiable. Use it only for a comparison at
+    evaluation time.
+    """
     K, Hh, Wh = hm.shape
     out = np.zeros((K, 2))
     for k in range(K):

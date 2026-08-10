@@ -1,38 +1,55 @@
-"""Sentiment models for Task 1 (my approach).
+"""Sentiment models for Task 1.
 
-Start from deliberately *light* preprocessing -- lowercase + whitespace
-collapse only -- and let a **combined word + character n-gram TF-IDF**
-representation absorb morphology and noise instead of hand-engineering it away.
-Character n-grams (3-5) are the key move: they capture "wasn't", sub-word
-affixes and typos without any stemming/lemmatisation, and they make the model
-robust to the messy email vocabulary that leaks past the spam gate.
+The first hypothesis of this project was that heavy preprocessing is not
+necessary. Thus the code starts with light preprocessing: it changes the text
+to lower case and removes the unwanted spaces. Then a TF-IDF representation of
+word n-grams and character n-grams absorbs the morphology and the noise.
 
-That was the hypothesis; the ablation in ``run_task1.representation_ablation``
-tested it and only half of it survived. Stopword removal and lemmatisation both
-*cost* accuracy, as predicted. Negation marking did not: scoping ``not`` over
-the clause that follows it adds ~1.8 points to the SVM on top of the character
-n-grams, so the character n-grams evidently capture the negator's presence but
-not its scope. The default preprocessor below is therefore ``mark_negation``,
-chosen by that measurement rather than by the original assumption.
+The character n-grams of 3 to 5 characters are the important part. They
+contain the data of a word such as "wasn't". They also contain sub-word parts
+and spelling errors. Thus the code does not do a stemming operation or a
+lemmatisation operation. The character n-grams also make the model reliable
+for the email vocabulary that goes through the spam gate.
 
-Headline sparse model: a **calibrated Linear SVM** (hinge loss, the max-margin
-discriminative classifier), with probabilities recovered via Platt scaling so
-we can apply a confidence threshold for the dummy/spam fallback. We compare it
-against the required word-list floor and Multinomial Naive Bayes so the report
-has the multi-approach comparison the brief asks for.
+The ablation in run_task1.representation_ablation tested this hypothesis. Only
+one half of the hypothesis was correct:
 
-Second method: a **BiLSTM over pretrained GloVe embeddings** (``GloVeBiLSTM`` below).
-Every model above treats a review as a bag of (sub)strings, so it cannot
-represent word *order*; the failure cases we mine are overwhelmingly compositional
--- negation scope ("not the worst film I have seen"), and mixed-polarity clauses
-that praise the performance while panning the film. A recurrent model reading
-the sentence left-to-right and right-to-left is the standard answer to exactly
-that, and dense embeddings let rare words share evidence with their neighbours
-instead of being pruned by ``min_df``.
+  * The removal of the stopwords decreases the accuracy. The lemmatisation
+    also decreases the accuracy. The hypothesis gives these two results
+    correctly.
+  * The negation marks increase the accuracy. A mark on the clause after the
+    word "not" adds approximately 1.8 points to the SVM, together with the
+    character n-grams. Thus the character n-grams find the negation word, but
+    they do not find the part of the sentence that the negation changes.
 
-Pretrained embeddings are neither additional labelled data nor a library
-function that performs sentiment classification, so both of the brief's
-restrictions remain satisfied.
+Thus the default preprocessor below is mark_negation. This measurement gives
+the default, not the initial hypothesis.
+
+The primary sparse model is a calibrated Linear SVM. It uses the hinge loss
+and finds the maximum margin between the two classes. Platt scaling then gives
+the probabilities. Thus the code can apply a threshold on the confidence and
+give the dummy label. The report compares this model with the word-list model
+and with a Multinomial Naive Bayes model. The brief asks for a comparison of
+more than one approach.
+
+The second method is a BiLSTM with pretrained GloVe embeddings. The class
+GloVeBiLSTM below contains it. Each other model uses a review as a bag of
+strings. Thus each other model cannot use the order of the words. Almost all
+the failure cases have a structure of this type:
+
+  * The negation changes only one part of the sentence, for example "not the
+    worst film I have seen".
+  * Different clauses have a different polarity, for example a clause that
+    speaks well of the performance and a clause that speaks badly of the film.
+
+A recurrent model reads the sentence from left to right and from right to
+left. This is the usual method for these failure cases. Also, a dense
+embedding lets a rare word use the data of the words near it. The parameter
+min_df does not remove such a word.
+
+A pretrained embedding is not additional labelled data. It is also not a
+library function that does sentiment classification. Thus the code obeys the
+two limits in the brief.
 """
 from __future__ import annotations
 
@@ -53,19 +70,21 @@ _RE_WS = re.compile(r"\s+")
 
 
 def light_clean(text: str) -> str:
-    """Minimal normalisation: lowercase + whitespace collapse. Nothing else."""
+    """Change the text to lower case and remove the unwanted spaces.
+
+    The function does no other operation.
+    """
     t = "" if text is None else str(text)
     return _RE_WS.sub(" ", t.lower()).strip()
 
 
 # --------------------------------------------------------------------------- #
-# Preprocessing variants, compared head to head in the ablation.               #
+# The preprocessing variants. The ablation compares them.                      #
 #                                                                              #
-# The claim this project makes is that heavy hand-engineered preprocessing is  #
-# not worth it once the representation carries sub-word information, so the    #
-# claim has to be tested rather than asserted. Each variant below is a drop-in #
-# ``preprocessor`` for TfidfVectorizer, so the ablation changes exactly one    #
-# thing at a time with the classifier held fixed.                              #
+# This project makes a claim: heavy manual preprocessing is not necessary if   #
+# the representation contains sub-word data. A test of the claim is necessary. #
+# Each variant below is a preprocessor for TfidfVectorizer. Thus the ablation  #
+# changes one item only, and the classifier stays the same.                    #
 # --------------------------------------------------------------------------- #
 _NEG_WORDS = {"not", "no", "never", "none", "cannot", "n't", "without", "hardly",
               "barely", "scarcely"}
@@ -76,8 +95,11 @@ _stopwords = None
 
 
 def _nltk_stopwords():
-    """English stopwords, minus the negations -- removing 'not' destroys the
-    very signal the sentiment task depends on, a classic own goal."""
+    """Give the English stopwords, but keep the negation words.
+
+    A negation word such as "not" contains the data that the sentiment task
+    needs. If the code removes it, the accuracy decreases.
+    """
     global _stopwords
     if _stopwords is None:
         from nltk.corpus import stopwords
@@ -86,13 +108,19 @@ def _nltk_stopwords():
 
 
 def remove_stopwords(text: str) -> str:
-    """Lowercase + drop high-frequency function words (negations retained)."""
+    """Change the text to lower case and remove the frequent function words.
+
+    The function keeps the negation words.
+    """
     sw = _nltk_stopwords()
     return " ".join(w for w in light_clean(text).split() if w not in sw)
 
 
 def lemmatise(text: str) -> str:
-    """Lowercase + WordNet lemmatisation, collapsing inflectional variants."""
+    """Change the text to lower case and apply the WordNet lemmatiser.
+
+    The lemmatiser changes the different forms of a word into one form.
+    """
     global _lemmatiser
     if _lemmatiser is None:
         from nltk.stem import WordNetLemmatizer
@@ -101,18 +129,22 @@ def lemmatise(text: str) -> str:
 
 
 def mark_negation(text: str) -> str:
-    """Prefix ``NOT_`` to every token between a negator and the next punctuation.
+    """Add the prefix "not_" to the tokens after a negation word.
 
-    Standard negation scoping (Das & Chen 2001; Pang 2002): it turns "not good"
-    into a token distinct from "good", which a unigram bag of words otherwise
-    cannot distinguish. Character n-grams already capture some of this, so the
-    ablation measures how much is left over.
+    The function adds the prefix to each token between the negation word and
+    the next punctuation mark.
+
+    This method is the usual method to find the part of the sentence that a
+    negation changes (Das and Chen 2001, Pang 2002). It makes "not good" a
+    different token from "good". A bag of single words cannot show this
+    difference. The character n-grams show part of this difference. Thus the
+    ablation measures the remaining part.
     """
     out, negating = [], False
     for raw in light_clean(text).split():
-        # Mark first, then update the scope: the token carrying the closing
-        # punctuation ("good,") is still inside the negation, and only the
-        # token after it is outside.
+        # First add the prefix, then change the state. The token with the
+        # punctuation mark at its end, for example "good,", is still in the
+        # negation. Only the token after it is outside of the negation.
         out.append("not_" + raw if negating else raw)
         if _NEG_STOP.search(raw):
             negating = False
@@ -130,15 +162,23 @@ PREPROCESSORS = {
 
 
 # --------------------------------------------------------------------------- #
-# Required simplest baseline: word-list classifier (lexicon margin).           #
+# The most simple model. The brief makes it necessary. It uses two word lists. #
 # --------------------------------------------------------------------------- #
 @dataclass
 class WordListClassifier:
-    """Lexicon classifier: score = (#positive-list hits) - (#negative-list hits).
+    """Classify a text with two word lists.
 
-    Lists are built by the greatest-frequency-difference method: the K words
-    most over-represented in positive vs negative documents, and vice versa.
-    Predict 1 if score > delta, else 0. This is the interpretable floor.
+    The score is the number of the words from the positive list minus the
+    number of the words from the negative list.
+
+    The code makes the lists from the difference of the frequencies. The
+    positive list contains the K words that are most frequent in the positive
+    documents. The negative list contains the K words that are most frequent
+    in the negative documents.
+
+    The class gives the class 1 if the score is more than delta. If not, it
+    gives the class 0. This model is the minimum reference, and a person can
+    understand its decisions.
     """
     K: int = 400
     delta: float = 0.0
@@ -148,7 +188,8 @@ class WordListClassifier:
     def fit(self, texts: List[str], y: np.ndarray) -> "WordListClassifier":
         pos_c, neg_c = Counter(), Counter()
         for t, lab in zip(texts, y):
-            toks = set(light_clean(t).split())          # binary presence per doc
+            toks = set(light_clean(t).split())          # count each word one
+                                                        # time in each document
             (pos_c if lab == 1 else neg_c).update(toks)
         n_pos = max(1, int((y == 1).sum()))
         n_neg = max(1, int((y == 0).sum()))
@@ -169,14 +210,19 @@ class WordListClassifier:
 
 
 # --------------------------------------------------------------------------- #
-# Shared word+char TF-IDF representation.                                      #
+# The TF-IDF representation of the words and the characters. More than one     #
+# model uses it.                                                               #
 # --------------------------------------------------------------------------- #
 def make_vectorizer(pre=light_clean, kinds=("word", "char")):
-    """Word (1-2) and/or character (3-5) TF-IDF over a chosen preprocessor.
+    """Make a TF-IDF vectorizer with a given preprocessor.
 
-    ``kinds`` selects which halves to build; the default union of both is the
-    headline feature set. ``pre`` is the preprocessing variant under test, which
-    is what makes the preprocessing x representation ablation a single sweep.
+    The word part uses n-grams of 1 to 2 words. The character part uses
+    n-grams of 3 to 5 characters.
+
+    The argument kinds selects the two parts. The default selects both parts,
+    which is the primary feature set. The argument pre gives the preprocessor
+    for the test. Thus one sweep can test each preprocessor with each
+    representation.
     """
     parts = []
     if "word" in kinds:
@@ -193,19 +239,26 @@ def make_vectorizer(pre=light_clean, kinds=("word", "char")):
 
 
 def build_svm(C: float = 1.0, random_state: int = 42, pre=mark_negation) -> Pipeline:
-    """Calibrated Linear SVM on the word+char TF-IDF union."""
+    """Make a calibrated Linear SVM on the TF-IDF features.
+
+    The features contain the word part and the character part.
+    """
     base = LinearSVC(C=C, class_weight="balanced", random_state=random_state)
     clf = CalibratedClassifierCV(base, method="sigmoid", cv=3)
     return Pipeline([("feats", make_vectorizer(pre)), ("clf", clf)])
 
 
 def build_nb(alpha: float = 0.3, pre=mark_negation) -> Pipeline:
-    """Multinomial NB on the same union (the original's best family, for comparison)."""
+    """Make a Multinomial Naive Bayes model on the same features.
+
+    This model is the best model of the initial approach. The report uses it
+    for the comparison.
+    """
     return Pipeline([("feats", make_vectorizer(pre)), ("clf", MultinomialNB(alpha=alpha))])
 
 
 # --------------------------------------------------------------------------- #
-# Second method: BiLSTM over pretrained GloVe embeddings.                      #
+# The second method: a BiLSTM with pretrained GloVe embeddings.                #
 # --------------------------------------------------------------------------- #
 GLOVE_PATH = os.environ.get(
     "AML_GLOVE",
@@ -217,21 +270,27 @@ _RE_TOK = re.compile(r"[a-z0-9']+|[!?.,;:()\"]")
 
 
 def tokenise(text: str) -> List[str]:
-    """Regex word/punctuation tokeniser over the lightly cleaned text.
+    """Divide the cleaned text into word tokens and punctuation tokens.
 
-    Punctuation is *kept* as tokens: exclamation and question marks carry real
-    sentiment signal in one-sentence reviews, and GloVe has vectors for them.
+    The function uses a regex.
+
+    The function keeps each punctuation mark as a token. An exclamation mark
+    and a question mark contain sentiment data in a review of one sentence.
+    GloVe also has a vector for each of these marks.
     """
     return _RE_TOK.findall(light_clean(text))
 
 
 def load_glove(vocab: Dict[str, int], dim: int, path: str = GLOVE_PATH):
-    """Build a (V, dim) embedding matrix from a GloVe text file.
+    """Make a (V, dim) embedding matrix from a GloVe text file.
 
-    Rows for words absent from GloVe (and the <pad>/<unk> rows) stay at their
-    small random initialisation. Returns (matrix, n_found) so the report can
-    quote the coverage; if the file is missing, returns (None, 0) and the caller
-    falls back to embeddings learned from scratch.
+    GloVe does not contain each word. The row of such a word keeps its initial
+    small random values. The rows <pad> and <unk> also keep these values.
+
+    The function returns (matrix, n_found). Thus the report can give the
+    fraction of the words in GloVe. If the file does not exist, the function
+    returns (None, 0). Then the caller learns the embeddings from the training
+    data.
     """
     rng = np.random.default_rng(0)
     emb = rng.normal(0, 0.1, (len(vocab), dim)).astype(np.float32)
@@ -251,24 +310,30 @@ def load_glove(vocab: Dict[str, int], dim: int, path: str = GLOVE_PATH):
 
 @dataclass
 class GloVeBiLSTM:
-    """BiLSTM sentiment classifier with a scikit-learn-shaped interface.
+    """A BiLSTM sentiment classifier with an interface of the scikit-learn type.
 
-    Design choices, each justified in the report:
-      * embeddings frozen -- 8.5k short training sentences cannot re-estimate
-        400k x 100 parameters without memorising, and freezing keeps the
-        semantic geometry GloVe learned from 6B tokens intact;
-      * one bidirectional layer, 128 units per direction -- the sentences are
-        short, so depth buys nothing and costs overfitting;
-      * max-over-time pooling of the hidden states rather than the final state,
-        so a decisive clause anywhere in the sentence can carry the prediction;
-      * dropout 0.4 before the classifier and early stopping on validation
-        accuracy, the two regularisers that matter at this data scale.
+    The report gives the reason for each design decision:
+
+      * The code does not train the embeddings. The training set has 8500
+        short sentences. This quantity of data cannot estimate 400000 x 100
+        parameters, and the model only memorises the data. A frozen embedding
+        keeps the semantic structure that GloVe learned from 6 billion tokens.
+      * The model has one bidirectional layer with 128 units in each
+        direction. The sentences are short. Thus more layers do not increase
+        the accuracy, and they increase the overfit.
+      * The model takes the maximum of each hidden state across the time
+        steps. It does not use the last state only. Thus an important clause
+        at any position in the sentence can change the prediction.
+      * The model uses a dropout of 0.4 before the classifier. The training
+        also stops early when the validation accuracy stops to increase. These
+        two methods control the overfit for this quantity of data.
     """
     dim: int = 100
     hidden: int = 128
     max_len: int = 60
-    min_count: int = 1     # no pruning: GloVe already supplies a good vector for
-                           # a word seen once, so a min_df cut only discards it
+    min_count: int = 1     # Keep each word. GloVe gives a good vector for a
+                           # word that occurs one time only. A larger value
+                           # removes that word and its data.
     dropout: float = 0.4
     lr: float = 1e-3
     batch: int = 64
@@ -280,7 +345,7 @@ class GloVeBiLSTM:
     device_: str = field(default="cpu", repr=False)
     glove_coverage_: float = 0.0
 
-    # -- helpers ----------------------------------------------------------- #
+    # -- the internal functions -------------------------------------------- #
     def _build_vocab(self, texts: List[str]) -> Dict[str, int]:
         c = Counter(t for s in texts for t in tokenise(s))
         words = [w for w, n in c.most_common() if n >= self.min_count]
@@ -300,7 +365,7 @@ class GloVeBiLSTM:
             return "mps"
         return "cuda" if torch.cuda.is_available() else "cpu"
 
-    # -- sklearn-shaped API ------------------------------------------------ #
+    # -- the interface of the scikit-learn type ---------------------------- #
     def fit(self, texts: List[str], y, val: Optional[Tuple[List[str], np.ndarray]] = None):
         import torch
         import torch.nn as nn
@@ -318,15 +383,19 @@ class GloVeBiLSTM:
                 s.emb = nn.Embedding(n_vocab, dim, padding_idx=0)
                 if weights is not None:
                     s.emb.weight.data.copy_(torch.from_numpy(weights))
-                    s.emb.weight.requires_grad = False       # frozen: see docstring
+                    # The training does not change the embeddings. The
+                    # docstring of the class gives the reason.
+                    s.emb.weight.requires_grad = False
                 s.lstm = nn.LSTM(dim, hidden, batch_first=True, bidirectional=True)
                 s.drop = nn.Dropout(dropout)
                 s.fc = nn.Linear(hidden * 2, 2)
 
             def forward(s, x):
                 h, _ = s.lstm(s.emb(x))
-                h = h.masked_fill((x == 0).unsqueeze(-1), -1e9)   # ignore padding
-                return s.fc(s.drop(h.max(dim=1).values))          # max-over-time
+                h = h.masked_fill((x == 0).unsqueeze(-1), -1e9)   # ignore the pad
+                return s.fc(s.drop(h.max(dim=1).values))          # the maximum
+                                                                  # across the
+                                                                  # time steps
 
         self.net_ = Net(len(self.vocab_), self.dim, self.hidden, self.dropout, emb)
         self.net_.to(self.device_)
@@ -377,17 +446,20 @@ class GloVeBiLSTM:
 
 @dataclass
 class SoftVoteEnsemble:
-    """Average the calibrated probabilities of already-fitted models.
+    """Calculate the mean of the calibrated probabilities of the models.
 
-    The point of adding a sequence model was never only its own accuracy: it is
-    that a BiLSTM over embeddings makes *different* mistakes from a bag of
-    n-grams, because it is the only member that can see word order. Averaging
-    probabilities converts that disagreement into accuracy -- which is why the
-    ensemble beats every member, including the two that individually tie.
+    Each model must be fit before you use this class.
 
-    All members must expose ``predict_proba`` over the same class ordering.
-    Nothing is fitted here, so there is no extra training cost and no extra
-    hyperparameter beyond membership.
+    The accuracy of the BiLSTM is not the only reason for a sequence model.
+    The BiLSTM makes different errors from a bag of n-grams, because it is the
+    only model that can use the order of the words. The mean of the
+    probabilities changes this difference into a better accuracy. Thus the
+    ensemble is more accurate than each of its models, and also more accurate
+    than the two models with the same individual accuracy.
+
+    Each model must have a function predict_proba. Each model must use the
+    same order of the classes. This class fits no model. Thus it adds no
+    training time, and its only parameter is the set of the models.
     """
     members: Dict[str, object] = field(default_factory=dict)
 
@@ -403,12 +475,18 @@ def predict_with_dummy(
     pipe: Pipeline, texts: List[str], spam_mask: np.ndarray,
     conf_threshold: float = 0.0, dummy: int = -1,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Final 3-way prediction: spam -> dummy; low-confidence -> dummy; else 0/1.
+    """Calculate the final prediction, which has three possible values.
 
-    The structural gate handles the bulk of spam. ``conf_threshold`` adds an
-    optional second safety net: any *kept* document the sentiment model is
-    unsure about (max class probability below the threshold) is also assigned
-    the dummy label, since an ambiguous review is not worth a confident guess.
+    The function gives the dummy label to a spam document. It also gives the
+    dummy label to a document with a low confidence. If not, it gives the
+    class 0 or the class 1.
+
+    The structural gate finds almost all the spam. The argument conf_threshold
+    adds a second protection, and it is optional. The gate keeps some
+    documents, and the sentiment model is not sure about some of them. Their
+    maximum class probability is less than the threshold. The function gives
+    the dummy label to these documents, because a guess about an unclear
+    review is not correct sufficiently frequently.
     """
     proba = pipe.predict_proba(texts)
     pred = proba.argmax(axis=1)

@@ -1,21 +1,29 @@
-"""Structural / stylometric features for the spam gate (Task 1, my approach).
+"""Structural features for the spam gate (Task 1).
 
-My approach treats spam as "text that doesn't look like a movie review *in
-structure*". The corpus mixes two very different document genres:
+This approach defines spam as text with a structure that is different from
+the structure of a movie review. The corpus contains two types of document:
 
-  * Real reviews  -> short, single-sentence Rotten-Tomatoes-style snippets.
-  * Spam          -> Enron-style emails with headers ("Subject:"), many
-                     line-breaks, digits, addresses, longer length.
+  * A real review is a short text of one sentence. It has the style of a
+    Rotten Tomatoes review.
+  * A spam document is an email of the Enron type. It has headers, for
+    example "Subject:". It also has many line breaks, many digits, one or
+    more addresses, and more characters.
 
-These genres separate cleanly on a handful of cheap, interpretable
-*surface* statistics, independent of sentiment vocabulary. Extracting them
-explicitly (rather than relying on a bag-of-words centroid) gives a spam
-gate that is (a) transparent, (b) robust to vocabulary drift -- it still
-fires on an unseen email even if none of its words were in the training
-vocabulary -- and (c) cleanly decoupled from the sentiment model.
+Some simple statistics of the surface of the text separate the two types.
+These statistics do not use the vocabulary of the sentiment. A person can read
+and understand each statistic.
 
-This module is deliberately dependency-light (regex + stdlib) so the same
-features can be computed identically at train, validation and test time.
+This module calculates the statistics directly. It does not use a centroid of
+a bag of words. Thus the spam gate has these three properties:
+
+  * A person can see the reason for each decision.
+  * The gate operates correctly when the vocabulary changes. It finds a new
+    email even if the training vocabulary contains no word of that email.
+  * The gate is independent of the sentiment model.
+
+This module uses only a regex and the standard library. Thus the code
+calculates the same features at training time, at validation time and at test
+time.
 """
 from __future__ import annotations
 
@@ -24,37 +32,43 @@ from typing import Dict, List
 
 import numpy as np
 
-# Pre-compiled regexes (compile once, reuse per document).
+# The code compiles these regexes one time and uses them for each document.
 _RE_SUBJECT = re.compile(r"^\s*subject\s*:", re.IGNORECASE)
 _RE_HEADER = re.compile(r"^\s*(from|to|cc|sent|date|re|fw|fwd)\s*:", re.IGNORECASE)
 _RE_URL = re.compile(r"https?://|www\.", re.IGNORECASE)
 _RE_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _RE_WS = re.compile(r"\s+")
 
-# The order here defines the feature-vector column order. Keep it stable:
-# the GMM and the standardiser are fit against this exact ordering.
+# This sequence gives the order of the columns of the feature vector. Do not
+# change it. The GMM and the standardiser use this order.
 FEATURE_NAMES: List[str] = [
-    "log_length",          # log(1 + char length) -- emails are far longer
-    "line_break_ratio",    # newlines per char -- emails are multi-line
-    "digit_ratio",         # fraction of digits -- emails carry meter ids, dates
-    "nonalpha_ratio",      # fraction of non-alphanumeric, non-space chars
-    "uppercase_ratio",     # caps among letters -- headers/codes raise this
-    "avg_token_len",       # mean token length -- emails contain long codes
-    "has_subject_header",  # binary: starts with "Subject:"
-    "has_any_header",      # binary: any RFC-822-ish header line present
-    "has_url",             # binary: contains a URL
-    "has_email_addr",      # binary: contains an @-address
+    "log_length",          # log(1 + number of characters). An email is longer.
+    "line_break_ratio",    # New lines per character. An email has many lines.
+    "digit_ratio",         # The fraction of digits. An email has meter IDs
+                           # and dates.
+    "nonalpha_ratio",      # The fraction of the characters that are not
+                           # alphanumeric and not a space.
+    "uppercase_ratio",     # The fraction of the letters in upper case. A
+                           # header or a code increases this value.
+    "avg_token_len",       # The mean length of a token. An email contains
+                           # long codes.
+    "has_subject_header",  # 1 if the text starts with "Subject:".
+    "has_any_header",      # 1 if the text has a header line of the RFC-822
+                           # type.
+    "has_url",             # 1 if the text contains a URL.
+    "has_email_addr",      # 1 if the text contains an address with an @.
 ]
 N_FEATURES = len(FEATURE_NAMES)
 
 
 def extract_one(text: str) -> np.ndarray:
-    """Return the structural feature vector for a single document."""
+    """Calculate the structural feature vector of one document."""
     t = "" if text is None else str(text)
     n_chars = len(t)
     denom = n_chars + 1e-9
 
-    # Line-break count covers both \n and \r line endings (the raw CSV uses \r\n).
+    # The count includes the \n character and the \r character, because the raw
+    # CSV file uses \r\n at the end of a line.
     n_breaks = t.count("\n") + t.count("\r")
 
     n_digits = sum(c.isdigit() for c in t)
@@ -65,7 +79,8 @@ def extract_one(text: str) -> np.ndarray:
     tokens = _RE_WS.split(t.strip()) if t.strip() else []
     avg_tok = (sum(len(tok) for tok in tokens) / len(tokens)) if tokens else 0.0
 
-    # Header detection looks at the first few lines only (cheap, robust).
+    # The code looks for a header in the first lines only. This method is fast
+    # and reliable.
     first_lines = t.splitlines()[:6]
     has_subject = 1.0 if (_RE_SUBJECT.match(t) or any(_RE_SUBJECT.match(l) for l in first_lines)) else 0.0
     has_header = 1.0 if any(_RE_HEADER.match(l) for l in first_lines) else 0.0
@@ -85,17 +100,25 @@ def extract_one(text: str) -> np.ndarray:
 
 
 def extract_matrix(texts) -> np.ndarray:
-    """Stack structural feature vectors for an iterable of documents."""
+    """Calculate the structural feature vector of each document.
+
+    The function puts the vectors together in one matrix.
+    """
     return np.vstack([extract_one(t) for t in texts])
 
 
 def high_precision_email_flag(text: str) -> bool:
-    """A conservative, near-zero-false-positive rule for "this is an email".
+    """Tell if the text is an email.
 
-    Used ONLY to build an evaluation gold-standard for the spam gate (we have
-    no provided spam labels) and as a sanity anchor -- not as the gate itself.
-    An Enron email is identifiable with very high precision by an RFC-822
-    header in its opening lines; genuine one-sentence reviews never have these.
+    This rule is careful. It gives almost no incorrect positive result.
+
+    Use this rule ONLY to make the reference labels for the evaluation of the
+    spam gate, because the data contains no spam labels. The rule is also a
+    check of the gate. The rule is not the gate.
+
+    A header of the RFC-822 type in the first lines identifies an Enron email
+    with very high precision. A true review of one sentence has no such
+    header.
     """
     t = "" if text is None else str(text)
     first_lines = t.splitlines()[:6]
@@ -107,7 +130,11 @@ def high_precision_email_flag(text: str) -> bool:
 
 
 def feature_summary(texts, flags: np.ndarray) -> Dict[str, Dict[str, float]]:
-    """Median feature values split by a boolean flag (for the EDA writeup)."""
+    """Calculate the median of each feature for the two groups.
+
+    The argument flags divides the documents into the two groups. The report
+    uses these values in the analysis of the data.
+    """
     M = extract_matrix(texts)
     out = {}
     for name, col in zip(FEATURE_NAMES, M.T):

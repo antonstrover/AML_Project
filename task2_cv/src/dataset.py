@@ -1,32 +1,39 @@
-"""Data loading + preprocessing for face alignment (Task 2).
+"""Data load and preprocess functions for face alignment (Task 2).
 
-The assignment ships its images and landmarks in a Colab-provided array (the
-exact container varies by year -- often an .npz or a pickled dict with keys
-like ``images`` and ``points``). This module is written against the canonical
-shapes so it works once you point ``load_raw`` at your file:
+The assignment gives the images and the landmarks in an array from Colab. The
+container is different in each year. Usually it is an .npz file or a pickled
+dict with the keys images and points. This module uses the standard shapes.
+Thus it operates correctly when load_raw reads your file:
 
     images : (N, H, W, 3) uint8   or  (N, H, W) grey
-    points : (N, 5, 2) float       landmark coords in ORIGINAL pixel space
+    points : (N, 5, 2) float      landmark coordinates in ORIGINAL pixels
 
-Preprocessing pipeline (W06_L12), each step justified in the report:
-    1. grayscale            -> 3 channels collapse to 1 (landmark cues are
-                               structural, not chromatic)
-    2. resize to 64x64      -> the brief says full resolution is unnecessary;
-                               CRITICALLY the landmarks are scaled by the same
-                               (sx, sy) factors so they stay aligned
-    3. intensity to [0,1]   -> float normalisation for stable optimisation
-    4. (optional) CLAHE/histogram equalisation -> global contrast; W06_L12
-       warns it can amplify noise, so it is a toggle we ablate, off by default
+The preprocess sequence is from W06_L12. The report gives the reason for each
+step:
 
-The crucial correctness point mirrored from Task 1's structural care: when the
-image is resized, the coordinates must be multiplied by the same scale, and at
-submission time predictions must be scaled BACK to original resolution.
+    1. Change to grayscale. The 3 channels become 1 channel. The data that
+       shows a landmark is structural, not chromatic.
+    2. Resize to 64x64. The brief says that the full resolution is not
+       necessary. IMPORTANT: multiply the landmarks by the same factors
+       (sx, sy). If you do not, the landmarks move away from the face.
+    3. Change the intensity range to [0,1]. Float values make the
+       optimisation stable.
+    4. Optional: apply CLAHE or histogram equalisation. This step increases
+       the global contrast. W06_L12 warns that this step can increase the
+       noise. Thus this step is a switch for an ablation, and the default is
+       off.
 
-``save_as_csv`` at the bottom is the worksheet's own export function, copied
-verbatim (both asserts included) because the brief requires predictions to be
-written by it. It expects points at ORIGINAL 256x256 resolution, so
-``to_original_resolution`` must be applied first, and it preserves row order --
-the test set is never permuted.
+The most important correctness point is the same as the structural care in
+Task 1. When the code resizes the image, it must multiply the coordinates by
+the same scale. At submission time the code must change the predictions BACK
+to the original resolution.
+
+The function save_as_csv at the end of this module is the export function from
+the worksheet. This module keeps it without a change, and it keeps the two
+asserts, because the brief tells you to write the predictions with it. The
+function expects landmarks at the ORIGINAL resolution of 256x256. Thus apply
+to_original_resolution first. The function keeps the order of the rows,
+because the test set stays in its initial order.
 """
 from __future__ import annotations
 
@@ -45,32 +52,41 @@ except Exception:
 class PreprocConfig:
     out_size: int = 64
     grayscale: bool = True
-    equalise: bool = False        # CLAHE; ablate on/off, default off (noise risk)
+    # CLAHE. The ablation sets this on and off. The default is off, because
+    # CLAHE can increase the noise.
+    equalise: bool = False
     to_float: bool = True
 
 
 def load_raw(path: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Load images and (if present) landmarks from an .npz/.npy file.
+    """Read the images and the landmarks from an .npz file or an .npy file.
 
-    Expected keys: 'images' and optionally 'points'/'landmarks'. Adapt here if
-    your assignment loader differs -- this is the single integration point.
+    The landmarks are optional.
+
+    The function reads the key 'images'. It also reads the key 'points' or
+    'landmarks' if the file contains one of them. Change this function if your
+    assignment gives the data in a different form. This function is the only
+    connection to the data file.
     """
     data = np.load(path, allow_pickle=True)
-    if hasattr(data, "files"):                       # npz
+    if hasattr(data, "files"):                       # an npz file
         imgs = data["images"]
         pts = None
         for k in ("points", "landmarks", "pts"):
             if k in data.files:
                 pts = data[k]; break
         return imgs, pts
-    return data, None                                # bare array of images
+    return data, None                                # an array of images only
 
 
 def preprocess(img: np.ndarray, pts: Optional[np.ndarray], cfg: PreprocConfig):
-    """Resize+grayscale+normalise one image and (if given) its landmarks.
+    """Resize, change to grayscale and normalise one image.
 
-    Returns (proc_img, proc_pts, scale) where scale=(sx, sy) maps ORIGINAL ->
-    resized; invert it to put predictions back in original resolution.
+    The function also changes the landmarks of the image if you give them.
+
+    The function returns (proc_img, proc_pts, scale). The value scale is
+    (sx, sy). It changes ORIGINAL coordinates into resized coordinates. Invert
+    the scale to change the predictions back to the original resolution.
     """
     h0, w0 = img.shape[:2]
     g = img
@@ -91,7 +107,10 @@ def preprocess(img: np.ndarray, pts: Optional[np.ndarray], cfg: PreprocConfig):
 
 
 def to_original_resolution(pts_resized: np.ndarray, scale: Tuple[float, float]) -> np.ndarray:
-    """Invert the resize scaling for submission (W: 4.9 tripwire)."""
+    """Invert the resize scale before the submission.
+
+    W: 4.9 gives a warning about this step.
+    """
     sx, sy = scale
     out = pts_resized.astype(np.float32).copy()
     out[..., 0] /= sx

@@ -100,7 +100,7 @@ ax = axes[1]
 ax.set_xlim(0, 4); ax.set_ylim(0, 6); ax.axis("off")
 ax.set_title("Sequence head: BiLSTM over GloVe", fontsize=11, weight="bold")
 stack = [("token ids, padded to 60", BLUE),
-         ("GloVe-100d embedding (frozen)\n~96% vocabulary coverage", BLUE),
+         ("GloVe-100d embedding (frozen)\n90% vocabulary coverage", BLUE),
          ("BiLSTM, 128 units per direction", ORANGE),
          ("max-over-time pooling (256-d)\ndropout 0.4", ORANGE),
          ("linear -> softmax P(pos)", GREEN)]
@@ -112,9 +112,9 @@ for i, (txt, c) in enumerate(stack):
 ax.text(2.0, 0.35, "reads order in both directions:\nnegation scope, mixed-polarity clauses",
         ha="center", fontsize=8, style="italic", color="#555")
 
-fig.suptitle("The two prediction methods; their probabilities are averaged in the "
-             "deployed soft-vote ensemble", fontsize=10, y=0.02)
-fig.tight_layout(rect=(0, 0.05, 1, 1))
+fig.tight_layout(rect=(0, 0.07, 1, 1))
+fig.text(0.5, 0.03, "The two prediction methods; their probabilities are averaged in "
+                    "the deployed soft-vote ensemble", ha="center", fontsize=9.5)
 fig.savefig(os.path.join(FIG, "model_architectures.png"), dpi=140)
 plt.close(fig)
 

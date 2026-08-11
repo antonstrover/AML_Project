@@ -61,14 +61,19 @@ AUG = A.AugmentConfig()
 #              wide: broad enough to give gradient everywhere near the landmark,
 #              tight enough that the soft-argmax expectation is not dragged by
 #              the tail of a neighbouring landmark.
-#   lr/opt     Adam 1e-3, cosine-annealed. Heatmap MSE against a normalised pmf
-#              produces very small gradients, which Adam's per-parameter scaling
-#              handles without hand-tuning; cosine removes the final-epochs
-#              plateau without another knob to justify.
-#   w_coord    0.1 on the coordinate term. The heatmap MSE is the primary loss
-#              (it supervises every pixel); the coordinate term only aligns the
-#              decode that is actually used at test time, so it is weighted down
-#              to avoid it dominating early training.
+#   targets    Gaussians peaking at 1.0, NOT normalised to sum to one. A
+#              sum-to-one target peaks at ~0.07 and drops the heatmap MSE to
+#              ~1e-5, six orders below the coordinate term, which turns the
+#              model back into the direct coordinate regressor this approach
+#              exists to replace. See model.combined_loss.
+#   lr/opt     Adam 1e-3, cosine-annealed. The heatmap MSE is dominated by
+#              background pixels and so produces small gradients, which Adam's
+#              per-parameter scaling handles without hand-tuning; cosine removes
+#              the final-epochs plateau without another knob to justify.
+#   w_coord    0.1 on the coordinate term, measured in grid-relative units. The
+#              heatmap MSE is the primary loss (it supervises every pixel); the
+#              coordinate term only aligns the decode actually used at test
+#              time, so it is weighted down to avoid dominating early training.
 #   batch      32 -- largest that keeps BatchNorm statistics stable at this
 #              dataset size while still fitting comfortably in MPS memory.
 #   aug factor 4x offline expansion, on top of which the model sees the same

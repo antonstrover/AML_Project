@@ -48,7 +48,7 @@ def _fail(msg):
 def check_outputs() -> bool:
     ok = True
     if not os.path.exists(REPORT):
-        ok = _fail("REPORT.pdf missing -- run make_report.py first")
+        ok = _fail("REPORT.pdf missing")
 
     if not os.path.exists(T1_CSV):
         ok = _fail("results_task1.csv missing -- run task1_nlp/run_task1.py")
@@ -89,8 +89,7 @@ def collect():
                 if n.endswith(SOURCE_EXT):
                     files.append(os.path.join(root, n))
     files += [os.path.join(HERE, f) for f in
-              ("README.md", "REPORT.md", "requirements.txt", "make_report.py",
-               "make_submission.py")
+              ("README.md", "requirements.txt", "make_submission.py")
               if os.path.exists(os.path.join(HERE, f))]
     return files
 

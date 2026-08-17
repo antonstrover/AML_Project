@@ -15,7 +15,6 @@ task2_cv/      run_task2.py     end-to-end pipeline -> submission/results_task2.
                tests_sanity.py  28 checks; run before trusting any result
                src/             dataset, augmentation, heatmaps, CNN, shape model,
                                 evaluation, robustness
-make_report.py     REPORT.md -> REPORT.pdf, with the 3000-word check
 make_submission.py builds submission.zip and validates both CSVs first
 ```
 
@@ -42,7 +41,6 @@ task1_nlp/data/glove.6B.100d.txt            # optional; the BiLSTM falls back wi
 .venv/bin/python task2_cv/tests_sanity.py      # 28/28
 .venv/bin/python task1_nlp/run_task1.py        # ~2 min
 .venv/bin/python task2_cv/run_task2.py         # ~1-2 h on an M4 (MPS)
-.venv/bin/python make_report.py
 .venv/bin/python make_submission.py
 ```
 
